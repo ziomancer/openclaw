@@ -72,6 +72,7 @@ export function createSessionMemoryRecallTool(options: {
           agentId: ctx.agentId,
           sessionId: ctx.sessionId,
           query,
+          helperDeps: { lane: "background:session-memory-recall" },
         }),
       );
     },
@@ -103,6 +104,7 @@ export function createSessionMemorySignalTool(options: {
           sessionId: ctx.sessionId,
           query,
           limit,
+          helperDeps: { lane: "background:session-memory-signal" },
         }),
       );
     },
