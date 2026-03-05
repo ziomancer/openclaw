@@ -38,6 +38,7 @@ Scope intent:
 - `tools.web.search.kimi.apiKey`
 - `tools.web.search.perplexity.apiKey`
 - `gateway.auth.password`
+- `gateway.auth.token`
 - `gateway.remote.token`
 - `gateway.remote.password`
 - `cron.webhookToken`
@@ -111,7 +112,6 @@ Out-of-scope credentials include:
 
 [//]: # "secretref-unsupported-list-start"
 
-- `gateway.auth.token`
 - `commands.ownerDisplaySecret`
 - `channels.matrix.accessToken`
 - `channels.matrix.accounts.*.accessToken`
