@@ -128,7 +128,9 @@ async function gatedAudit(
   params: { agentId: string; sessionId: string; entry: SessionMemoryAuditEntry },
   verbosity: AuditVerbosity,
   alertDeps?: { cfg: OpenClawConfig; now: number },
+  auditEnabled = true,
 ): Promise<void> {
+  if (!auditEnabled) return;
   const alertingEnabled = alertDeps ? resolveAlertingConfig(alertDeps.cfg).enabled : false;
   if (!shouldEmitForVerbosity(params.entry.event, verbosity, alertingEnabled)) return;
   await appendSessionMemoryAuditEntry(params);
@@ -202,26 +204,34 @@ function updateFrequencyScore(
     };
   }
 
-  const prev = existing ?? { lastScore: 0, lastUpdateMs: now };
-  const elapsedMs = Math.max(0, now - prev.lastUpdateMs);
-  const decayed = prev.lastScore * Math.exp(-elapsedMs / frequencyCfg.halfLifeMs);
-  const flagWeight = computeFlagWeight(ruleIds, frequencyCfg.weights);
-  const newScore = decayed + flagWeight;
+  try {
+    const prev = existing ?? { lastScore: 0, lastUpdateMs: now };
+    const elapsedMs = Math.max(0, now - prev.lastUpdateMs);
+    const decayed = prev.lastScore * Math.exp(-elapsedMs / frequencyCfg.halfLifeMs);
+    const flagWeight = computeFlagWeight(ruleIds, frequencyCfg.weights);
+    const newScore = decayed + flagWeight;
 
-  const { tier1, tier2, tier3 } = frequencyCfg.thresholds;
-  let tier: EscalationTier = "none";
-  if (newScore >= tier3) tier = "tier3";
-  else if (newScore >= tier2) tier = "tier2";
-  else if (newScore >= tier1) tier = "tier1";
+    const { tier1, tier2, tier3 } = frequencyCfg.thresholds;
+    let tier: EscalationTier = "none";
+    if (newScore >= tier3) tier = "tier3";
+    else if (newScore >= tier2) tier = "tier2";
+    else if (newScore >= tier1) tier = "tier1";
 
-  const terminated = tier === "tier3";
-  const state: SessionSuspicionState = {
-    lastScore: newScore,
-    lastUpdateMs: now,
-    ...(terminated ? { terminated: true } : {}),
-  };
-  sessionFrequencyState.set(sessionId, state);
-  return { newScore, tier, state };
+    const terminated = tier === "tier3";
+    const state: SessionSuspicionState = {
+      lastScore: newScore,
+      lastUpdateMs: now,
+      ...(terminated ? { terminated: true } : {}),
+    };
+    sessionFrequencyState.set(sessionId, state);
+    return { newScore, tier, state };
+  } catch (error) {
+    log.warn("frequency scoring failed, degrading gracefully", {
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { newScore: 0, tier: "none" as EscalationTier, state: existing ?? { lastScore: 0, lastUpdateMs: now } };
+  }
 }
 
 /**
@@ -240,6 +250,7 @@ async function emitFrequencyEscalation(params: {
   source: "transcript" | "mcp";
   verbosity?: AuditVerbosity;
   cfg?: OpenClawConfig;
+  auditEnabled?: boolean;
 }): Promise<void> {
   if (params.tier === "none") return;
   const eventMap = {
@@ -261,6 +272,7 @@ async function emitFrequencyEscalation(params: {
     },
     params.verbosity ?? "standard",
     params.cfg ? { cfg: params.cfg, now: params.now } : undefined,
+    params.auditEnabled,
   );
   if (params.tier === "tier3") {
     log.warn("frequency tracking: Tier 3 threshold reached — session marked terminated", {
@@ -500,6 +512,7 @@ async function sweepAndAuditExpiredRaw(params: {
   sessionId: string;
   now: number;
   verbosity?: AuditVerbosity;
+  auditEnabled?: boolean;
 }): Promise<void> {
   const expired = await sweepExpiredSessionMemoryRawEntries(params);
   if (expired.length === 0) {
@@ -519,6 +532,8 @@ async function sweepAndAuditExpiredRaw(params: {
           },
         },
         verbosity,
+        undefined,
+        params.auditEnabled,
       ),
     ),
   );
@@ -625,6 +640,7 @@ export async function writeTranscriptTurnToSessionMemory(params: {
   });
 
   const auditVerbosity = validationCfg.audit.verbosity;
+  const auditEnabled = validationCfg.audit.enabled;
 
   // Emit syntactic audit events
   if (validationCfg.syntactic.enabled) {
@@ -649,6 +665,8 @@ export async function writeTranscriptTurnToSessionMemory(params: {
         },
       },
       auditVerbosity,
+      undefined,
+      auditEnabled,
     );
   }
 
@@ -669,6 +687,8 @@ export async function writeTranscriptTurnToSessionMemory(params: {
         },
       },
       auditVerbosity,
+      undefined,
+      auditEnabled,
     );
   }
 
@@ -690,6 +710,52 @@ export async function writeTranscriptTurnToSessionMemory(params: {
         },
       },
       auditVerbosity,
+      undefined,
+      auditEnabled,
+    );
+  }
+
+  // flags_summary (standard verbosity only): one event per stage that produced flags
+  if (validationCfg.syntactic.enabled && preFilter.syntactic.ruleIds.length > 0) {
+    await gatedAudit(
+      {
+        agentId: params.agentId,
+        sessionId: params.sessionId,
+        entry: {
+          event: "flags_summary",
+          timestamp: nowIso(now),
+          messageId: rawEntry.messageId,
+          stage: "syntactic",
+          profile: "write",
+          ruleIds: preFilter.syntactic.ruleIds,
+          flagCount: preFilter.syntactic.flags.length,
+          blocked: !preFilter.syntactic.pass,
+        },
+      },
+      auditVerbosity,
+      undefined,
+      auditEnabled,
+    );
+  }
+  if (validationCfg.schema.enabled && preFilter.schema.ruleIds.length > 0) {
+    await gatedAudit(
+      {
+        agentId: params.agentId,
+        sessionId: params.sessionId,
+        entry: {
+          event: "flags_summary",
+          timestamp: nowIso(now),
+          messageId: rawEntry.messageId,
+          stage: "schema",
+          profile: "write",
+          ruleIds: preFilter.schema.ruleIds,
+          flagCount: preFilter.schema.violations.length,
+          blocked: !preFilter.schema.pass,
+        },
+      },
+      auditVerbosity,
+      undefined,
+      auditEnabled,
     );
   }
 
@@ -722,6 +788,7 @@ export async function writeTranscriptTurnToSessionMemory(params: {
         now,
         source: "transcript",
         verbosity: auditVerbosity,
+        auditEnabled,
       });
     }
   }
@@ -755,6 +822,8 @@ export async function writeTranscriptTurnToSessionMemory(params: {
         },
       },
       auditVerbosity,
+      undefined,
+      auditEnabled,
     );
     return;
   }
@@ -764,6 +833,7 @@ export async function writeTranscriptTurnToSessionMemory(params: {
     sessionId: params.sessionId,
     now,
     verbosity: auditVerbosity,
+    auditEnabled,
   });
   await writeSessionMemoryRawEntry({
     agentId: params.agentId,
@@ -834,6 +904,8 @@ export async function writeTranscriptTurnToSessionMemory(params: {
           },
         },
         auditVerbosity,
+        undefined,
+        auditEnabled,
       );
       return;
     }
@@ -864,6 +936,8 @@ export async function writeTranscriptTurnToSessionMemory(params: {
         },
       },
       auditVerbosity,
+      undefined,
+      auditEnabled,
     );
   } catch (error) {
     await gatedAudit(
@@ -878,6 +952,8 @@ export async function writeTranscriptTurnToSessionMemory(params: {
         },
       },
       auditVerbosity,
+      undefined,
+      auditEnabled,
     );
   }
 }
@@ -1212,6 +1288,7 @@ export async function processMcpToolResult(params: {
   const sanitizationCfg = resolveSessionSanitizationConfig(params.cfg);
   const validationCfg = resolveSessionSanitizationValidationConfig(params.cfg);
   const auditVerbosity = validationCfg.audit.verbosity;
+  const auditEnabled = validationCfg.audit.enabled;
   // Alerting context threaded through all gatedAudit calls in this function
   const alertDeps = { cfg: params.cfg, now };
 
@@ -1235,6 +1312,7 @@ export async function processMcpToolResult(params: {
       },
       auditVerbosity,
       alertDeps,
+      auditEnabled,
     );
     return {
       trusted: true,
@@ -1324,6 +1402,7 @@ export async function processMcpToolResult(params: {
       },
       auditVerbosity,
       alertDeps,
+      auditEnabled,
     );
   }
 
@@ -1346,6 +1425,7 @@ export async function processMcpToolResult(params: {
       },
       auditVerbosity,
       alertDeps,
+      auditEnabled,
     );
   }
 
@@ -1369,6 +1449,53 @@ export async function processMcpToolResult(params: {
       },
       auditVerbosity,
       alertDeps,
+      auditEnabled,
+    );
+  }
+
+  // flags_summary (standard verbosity only): one event per stage that produced flags
+  if (validationCfg.syntactic.enabled && mcpPreFilter.syntactic.ruleIds.length > 0) {
+    await gatedAudit(
+      {
+        agentId: params.agentId,
+        sessionId: params.sessionId,
+        entry: {
+          event: "flags_summary",
+          timestamp: nowIso(now),
+          toolCallId: params.toolCallId,
+          server: params.server,
+          stage: "syntactic",
+          profile: "mcp",
+          ruleIds: mcpPreFilter.syntactic.ruleIds,
+          flagCount: mcpPreFilter.syntactic.flags.length,
+          blocked: !mcpPreFilter.syntactic.pass,
+        },
+      },
+      auditVerbosity,
+      alertDeps,
+      auditEnabled,
+    );
+  }
+  if (validationCfg.schema.enabled && mcpPreFilter.schema.ruleIds.length > 0) {
+    await gatedAudit(
+      {
+        agentId: params.agentId,
+        sessionId: params.sessionId,
+        entry: {
+          event: "flags_summary",
+          timestamp: nowIso(now),
+          toolCallId: params.toolCallId,
+          server: params.server,
+          stage: "schema",
+          profile: "mcp",
+          ruleIds: mcpPreFilter.schema.ruleIds,
+          flagCount: mcpPreFilter.schema.violations.length,
+          blocked: !mcpPreFilter.schema.pass,
+        },
+      },
+      auditVerbosity,
+      alertDeps,
+      auditEnabled,
     );
   }
 
@@ -1408,6 +1535,7 @@ export async function processMcpToolResult(params: {
           source: "mcp",
           verbosity: auditVerbosity,
           cfg: params.cfg,
+          auditEnabled,
         });
       }
     }
@@ -1452,6 +1580,7 @@ export async function processMcpToolResult(params: {
       },
       auditVerbosity,
       alertDeps,
+      auditEnabled,
     );
     return buildBlockedResult(
       mcpPreFilter.allFlags,
@@ -1501,6 +1630,7 @@ export async function processMcpToolResult(params: {
       },
       auditVerbosity,
       alertDeps,
+      auditEnabled,
     );
     return buildBlockedResult(tier1.blockFlags, tier1.contextNote, 1);
   }
@@ -1607,6 +1737,7 @@ export async function processMcpToolResult(params: {
       },
       auditVerbosity,
       alertDeps,
+      auditEnabled,
     );
     return buildBlockedResult(["sanitization sub-agent failed"], "blocked: sub-agent error", 2);
   }
@@ -1628,6 +1759,30 @@ export async function processMcpToolResult(params: {
     },
   });
 
+  // flags_summary for semantic stage (standard verbosity only)
+  if (child.flags.length > 0) {
+    await gatedAudit(
+      {
+        agentId: params.agentId,
+        sessionId: params.sessionId,
+        entry: {
+          event: "flags_summary",
+          timestamp: nowIso(now),
+          toolCallId: params.toolCallId,
+          server: params.server,
+          stage: "semantic",
+          profile: "mcp",
+          ruleIds: child.flags,
+          flagCount: child.flags.length,
+          blocked: !child.safe,
+        },
+      },
+      auditVerbosity,
+      alertDeps,
+      auditEnabled,
+    );
+  }
+
   if (!child.safe) {
     await gatedAudit(
       {
@@ -1644,6 +1799,7 @@ export async function processMcpToolResult(params: {
       },
       auditVerbosity,
       alertDeps,
+      auditEnabled,
     );
     return buildBlockedResult(child.flags, child.contextNote, 2);
   }
@@ -1684,6 +1840,7 @@ export async function processMcpToolResult(params: {
       },
       auditVerbosity,
       alertDeps,
+      auditEnabled,
     );
   }
 
@@ -1701,6 +1858,7 @@ export async function processMcpToolResult(params: {
     },
     auditVerbosity,
     alertDeps,
+    auditEnabled,
   );
 
   // Audit retention sweep — fire-and-forget, runs after every successful pass

@@ -223,10 +223,10 @@ export const evaluateWriteFailSpike: RuleEvaluator = ({ entry, cfg, recentContex
   if (entry.event !== "write_failed") return null;
 
   const rule = cfg.rules.writeFailSpike;
+  // Cross-session: count write_failed across ALL sessions for this agent
   const recent = queryIndex({
     event: "write_failed",
     agentId: entry.agentId,
-    sessionId: entry.sessionId,
     windowMs: rule.windowMs,
     now,
   });

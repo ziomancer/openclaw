@@ -509,6 +509,30 @@ describe("evaluateWriteFailSpike", () => {
   });
 });
 
+describe("evaluateWriteFailSpike — cross-session aggregation", () => {
+  const cfg = resolveAlertingConfig(makeCfg({ rules: { writeFailSpike: { count: 3, windowMinutes: 5 } } }));
+
+  it("counts write_failed across different sessions for the same agent", () => {
+    // 2 events from different sessions (below threshold individually but combined ≥ 3)
+    addToIndex(makeEvent("write_failed", { sessionId: "sess-x" }), NOW);
+    addToIndex(makeEvent("write_failed", { sessionId: "sess-y" }), NOW);
+    addToIndex(makeEvent("write_failed", { sessionId: "sess-z" }), NOW);
+    // Triggering entry from yet another session
+    const entry = makeEvent("write_failed", { sessionId: "sess-new" });
+    const alert = evaluateWriteFailSpike({ entry, cfg, recentContext: [], now: NOW });
+    expect(alert).not.toBeNull();
+    expect(alert?.ruleId).toBe("writeFailSpike");
+  });
+
+  it("does not trigger when a single session is below threshold", () => {
+    // Only 2 events total (same session, below threshold of 3)
+    addToIndex(makeEvent("write_failed", { sessionId: "sess-only" }), NOW);
+    addToIndex(makeEvent("write_failed", { sessionId: "sess-only" }), NOW);
+    const entry = makeEvent("write_failed", { sessionId: "sess-only" });
+    expect(evaluateWriteFailSpike({ entry, cfg, recentContext: [], now: NOW })).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Webhook delivery
 // ---------------------------------------------------------------------------
