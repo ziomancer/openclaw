@@ -7,10 +7,7 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { OpenClawConfig } from "../config/config.js";
 import { logDebug, logError } from "../logger.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import {
-  resolveToolServer,
-  UNKNOWN_MCP_SERVER,
-} from "../memory/session-sanitization/config.js";
+import { resolveToolServer, UNKNOWN_MCP_SERVER } from "../memory/session-sanitization/config.js";
 import { processMcpToolResult } from "../memory/session-sanitization/service.js";
 import { isPlainObject } from "../utils.js";
 import type { ClientToolDefinition } from "./pi-embedded-runner/run/params.js";
