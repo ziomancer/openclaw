@@ -15,6 +15,7 @@ import {
 import { processMcpToolResult } from "../memory/session-sanitization/service.js";
 import { isPlainObject } from "../utils.js";
 import type { ClientToolDefinition } from "./pi-embedded-runner/run/params.js";
+import { abortEmbeddedPiRun } from "./pi-embedded.js";
 import type { HookContext } from "./pi-tools.before-tool-call.js";
 import {
   isToolWrappedWithBeforeToolCallHook,
@@ -288,7 +289,11 @@ export function wrapMcpToolDefinitions(
             tool: def.name,
             tier: mcpResult.tier,
             flags: mcpResult.flags,
+            terminated: mcpResult.terminated ?? false,
           });
+          if (mcpResult.terminated) {
+            abortEmbeddedPiRun(params.sessionId);
+          }
           return jsonResult({
             status: "error",
             tool: def.name,

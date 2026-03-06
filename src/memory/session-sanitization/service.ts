@@ -1190,22 +1190,24 @@ export async function signalSessionMemory(params: {
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    try {
-      await appendSessionMemoryAuditEntry({
-        agentId: params.agentId,
-        sessionId: params.sessionId,
-        entry: {
-          event: "write_failed",
-          timestamp: nowIso(now),
-          reason: `signal helper failed: ${reason}`,
-        },
-      });
-    } catch (auditError) {
-      log.warn("session memory signal audit write failed", {
-        agentId: params.agentId,
-        sessionId: params.sessionId,
-        error: auditError instanceof Error ? auditError.message : String(auditError),
-      });
+    if (signalValidationCfg.audit.enabled) {
+      try {
+        await appendSessionMemoryAuditEntry({
+          agentId: params.agentId,
+          sessionId: params.sessionId,
+          entry: {
+            event: "write_failed",
+            timestamp: nowIso(now),
+            reason: `signal helper failed: ${reason}`,
+          },
+        });
+      } catch (auditError) {
+        log.warn("session memory signal audit write failed", {
+          agentId: params.agentId,
+          sessionId: params.sessionId,
+          error: auditError instanceof Error ? auditError.message : String(auditError),
+        });
+      }
     }
     return {
       mode: "signal",
