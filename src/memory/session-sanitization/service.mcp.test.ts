@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
-import { processMcpToolResult } from "./service.js";
+import { processMcpToolResult, resetSessionFrequencyState } from "./service.js";
 import { readSessionMemoryAuditEntries, readSessionMemoryMcpRawEntries } from "./storage.js";
 
 // ---------------------------------------------------------------------------
@@ -90,6 +90,7 @@ describe("processMcpToolResult", () => {
   });
 
   afterEach(async () => {
+    resetSessionFrequencyState(SESSION_ID);
     if (originalStateDir === undefined) {
       delete process.env.OPENCLAW_STATE_DIR;
     } else {

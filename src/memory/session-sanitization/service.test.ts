@@ -121,8 +121,7 @@ describe("session sanitization service", () => {
     expect(summaries).toHaveLength(1);
     expect(summaries[0]?.messageId).toBe("msg-1");
     expect(summaries[0]?.actionItems).toEqual(["Call mom tomorrow at 9."]);
-    expect(audit).toHaveLength(1);
-    expect(audit[0]?.event).toBe("write");
+    expect(audit.find((a) => a.event === "write")).toBeDefined();
   });
 
   it("records discard decisions without appending a summary entry", async () => {
@@ -157,9 +156,9 @@ describe("session sanitization service", () => {
     });
 
     expect(summaries).toHaveLength(0);
-    expect(audit).toHaveLength(1);
-    expect(audit[0]?.event).toBe("discard");
-    expect(audit[0]?.messageId).toBe("msg-discard");
+    const discardEntry = audit.find((a) => a.event === "discard");
+    expect(discardEntry).toBeDefined();
+    expect(discardEntry?.messageId).toBe("msg-discard");
   });
 
   it("returns high confidence only for raw-backed recall", async () => {

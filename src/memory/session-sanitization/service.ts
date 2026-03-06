@@ -7,6 +7,8 @@ import {
   resolveSessionSanitizationAvailability,
   resolveSessionSanitizationConfig,
   resolveSessionSanitizationMcpConfig,
+  resolveSessionSanitizationValidationConfig,
+  type ResolvedValidationConfig,
 } from "./config.js";
 import { runSessionSanitizationHelper, type SanitizationRunner } from "./runtime.js";
 import {
@@ -23,6 +25,7 @@ import {
 } from "./storage.js";
 import { runTier1PreFilter } from "./tier1.js";
 import type {
+  EscalationTier,
   SessionMemoryConfidence,
   SessionMemoryMcpChildResult,
   SessionMemoryRawEntry,
@@ -30,12 +33,137 @@ import type {
   SessionMemoryRecallResult,
   SessionMemorySignalResult,
   SessionMemorySummaryEntry,
+  SessionSuspicionState,
   SessionMemoryWriteResult,
 } from "./types.js";
+import { runPreFilter } from "./validation.js";
 
 const log = createSubsystemLogger("memory/session-sanitization");
 const warnedUnavailableAgents = new Set<string>();
 const warnedSandboxSkipPassthrough = new Set<string>();
+
+// ---------------------------------------------------------------------------
+// Within-session frequency tracking state
+// Held in memory for process lifetime. Per-session, indexed by sessionId.
+// Not persisted — session restart resets the score (spec requirement).
+// ---------------------------------------------------------------------------
+
+const sessionFrequencyState = new Map<string, SessionSuspicionState>();
+
+/**
+ * Look up the weight for a rule ID by checking exact match first,
+ * then falling back to prefix-wildcard match (e.g. "injection.*").
+ */
+function lookupRuleWeight(ruleId: string, weights: Record<string, number>): number {
+  if (weights[ruleId] !== undefined) return weights[ruleId];
+  for (const [pattern, weight] of Object.entries(weights)) {
+    if (pattern.endsWith(".*")) {
+      const prefix = pattern.slice(0, -2);
+      if (ruleId.startsWith(`${prefix}.`)) return weight;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Compute the total flag weight for a set of rule IDs.
+ */
+function computeFlagWeight(ruleIds: string[], weights: Record<string, number>): number {
+  let total = 0;
+  for (const ruleId of ruleIds) {
+    total += lookupRuleWeight(ruleId, weights);
+  }
+  return total;
+}
+
+/**
+ * Update the session's frequency score using exponential decay and return
+ * the new score plus the escalation tier.
+ *
+ * Algorithm: currentScore = previousScore × e^(-elapsed / halfLife) + flagWeight
+ *
+ * O(1) per call — two reads, one write to the in-memory Map.
+ */
+function updateFrequencyScore(
+  sessionId: string,
+  ruleIds: string[],
+  now: number,
+  frequencyCfg: ResolvedValidationConfig["frequency"],
+): { newScore: number; tier: EscalationTier; state: SessionSuspicionState } {
+  const existing = sessionFrequencyState.get(sessionId);
+
+  // Already terminated — block all future calls immediately
+  if (existing?.terminated) {
+    return {
+      newScore: existing.lastScore,
+      tier: "tier3",
+      state: existing,
+    };
+  }
+
+  const prev = existing ?? { lastScore: 0, lastUpdateMs: now };
+  const elapsedMs = Math.max(0, now - prev.lastUpdateMs);
+  const decayed = prev.lastScore * Math.exp(-elapsedMs / frequencyCfg.halfLifeMs);
+  const flagWeight = computeFlagWeight(ruleIds, frequencyCfg.weights);
+  const newScore = decayed + flagWeight;
+
+  const { tier1, tier2, tier3 } = frequencyCfg.thresholds;
+  let tier: EscalationTier = "none";
+  if (newScore >= tier3) tier = "tier3";
+  else if (newScore >= tier2) tier = "tier2";
+  else if (newScore >= tier1) tier = "tier1";
+
+  const terminated = tier === "tier3";
+  const state: SessionSuspicionState = {
+    lastScore: newScore,
+    lastUpdateMs: now,
+    ...(terminated ? { terminated: true } : {}),
+  };
+  sessionFrequencyState.set(sessionId, state);
+  return { newScore, tier, state };
+}
+
+/**
+ * Emit frequency escalation audit events for tier1, tier2, or tier3.
+ * Returns the appropriate blocked McpProcessResult for tier3, or undefined
+ * for tier1/tier2 (caller should continue processing with enhanced context).
+ */
+async function emitFrequencyEscalation(params: {
+  agentId: string;
+  sessionId: string;
+  tier: EscalationTier;
+  newScore: number;
+  threshold: number;
+  recentFlags: string[];
+  now: number;
+  source: "transcript" | "mcp";
+}): Promise<void> {
+  if (params.tier === "none") return;
+  const eventMap = {
+    tier1: "frequency_escalation_tier1",
+    tier2: "frequency_escalation_tier2",
+    tier3: "frequency_escalation_tier3",
+  } as const;
+  await appendSessionMemoryAuditEntry({
+    agentId: params.agentId,
+    sessionId: params.sessionId,
+    entry: {
+      event: eventMap[params.tier],
+      timestamp: nowIso(params.now),
+      currentScore: params.newScore,
+      threshold: params.threshold,
+      recentFlags: params.recentFlags,
+    },
+  });
+  if (params.tier === "tier3") {
+    log.warn("frequency tracking: Tier 3 threshold reached — session marked terminated", {
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+      score: params.newScore,
+      source: params.source,
+    });
+  }
+}
 
 type HelperDeps = {
   runner?: SanitizationRunner;
@@ -313,6 +441,116 @@ export async function writeTranscriptTurnToSessionMemory(params: {
     return;
   }
 
+  // --- Stage 1: Parallel pre-filter (syntactic + schema) ---
+  const validationCfg = resolveSessionSanitizationValidationConfig(params.cfg);
+  const preFilter = await runPreFilter({
+    input: rawEntry,
+    source: "transcript",
+    syntacticConfig: validationCfg.syntactic,
+  });
+
+  // Emit syntactic audit events
+  if (validationCfg.syntactic.enabled) {
+    const syntacticEvent =
+      !preFilter.syntactic.pass
+        ? "syntactic_fail"
+        : preFilter.syntactic.flags.length > 0
+          ? "syntactic_flags"
+          : "syntactic_pass";
+    await appendSessionMemoryAuditEntry({
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+      entry: {
+        event: syntacticEvent,
+        timestamp: nowIso(now),
+        messageId: rawEntry.messageId,
+        ruleIds: preFilter.syntactic.ruleIds,
+        flags: preFilter.syntactic.flags,
+        stage: "syntactic",
+        profile: "write",
+      },
+    });
+  }
+
+  // Emit schema audit event
+  if (validationCfg.schema.enabled) {
+    await appendSessionMemoryAuditEntry({
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+      entry: {
+        event: preFilter.schema.pass ? "schema_pass" : "schema_fail",
+        timestamp: nowIso(now),
+        messageId: rawEntry.messageId,
+        violations: preFilter.schema.violations,
+        ruleIds: preFilter.schema.ruleIds,
+        stage: "schema",
+        profile: "write",
+      },
+    });
+  }
+
+  // --- Frequency tracking update ---
+  let frequencyTier: EscalationTier = "none";
+  let frequencyScore = 0;
+  if (validationCfg.frequency.enabled && preFilter.allRuleIds.length > 0) {
+    const freq = updateFrequencyScore(
+      params.sessionId,
+      preFilter.allRuleIds,
+      now,
+      validationCfg.frequency,
+    );
+    frequencyTier = freq.tier;
+    frequencyScore = freq.newScore;
+    if (frequencyTier !== "none") {
+      const thresholdForTier =
+        frequencyTier === "tier3"
+          ? validationCfg.frequency.thresholds.tier3
+          : frequencyTier === "tier2"
+            ? validationCfg.frequency.thresholds.tier2
+            : validationCfg.frequency.thresholds.tier1;
+      await emitFrequencyEscalation({
+        agentId: params.agentId,
+        sessionId: params.sessionId,
+        tier: frequencyTier,
+        newScore: frequencyScore,
+        threshold: thresholdForTier,
+        recentFlags: preFilter.allFlags.slice(0, 10),
+        now,
+        source: "transcript",
+      });
+    }
+  }
+
+  // Tier 3 — mark terminated; don't proceed with write
+  if (frequencyTier === "tier3") {
+    return;
+  }
+
+  // --- Two-pass gating ---
+  const isTwoPassDefinitiveFail =
+    validationCfg.twoPass.enabled &&
+    frequencyTier === "none" && // Frequency tier1+ overrides two-pass skip
+    !preFilter.pass &&
+    preFilter.allRuleIds.some((id) => validationCfg.twoPass.hardBlockRules.includes(id));
+
+  if (isTwoPassDefinitiveFail) {
+    await appendSessionMemoryAuditEntry({
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+      entry: {
+        event: "twopass_hard_block",
+        timestamp: nowIso(now),
+        messageId: rawEntry.messageId,
+        ruleIds: preFilter.allRuleIds.filter((id) =>
+          validationCfg.twoPass.hardBlockRules.includes(id),
+        ),
+        reason: "skipped semantic pass — hard block rule triggered",
+        profile: "write",
+      },
+    });
+    return;
+  }
+
   await sweepAndAuditExpiredRaw({
     agentId: params.agentId,
     sessionId: params.sessionId,
@@ -328,6 +566,12 @@ export async function writeTranscriptTurnToSessionMemory(params: {
     agentId: params.agentId,
     sessionId: params.sessionId,
   });
+
+  // Build enhanced context for tier2 enhanced scrutiny
+  const tier2ScrutinyNote =
+    frequencyTier === "tier2"
+      ? `[session frequency alert: elevated injection pattern frequency detected. Apply heightened scrutiny. Recent flags: ${preFilter.allFlags.slice(0, 5).join("; ")}]`
+      : undefined;
 
   try {
     const child = await runSessionSanitizationHelper<SessionMemoryWriteResult>({
@@ -349,6 +593,15 @@ export async function writeTranscriptTurnToSessionMemory(params: {
           relativePath: "summary-index.jsonl",
           content: buildJsonLines(summaryEntries),
         },
+        // Inject tier2 frequency alert as a workspace file when elevated scrutiny is needed
+        ...(tier2ScrutinyNote
+          ? [
+              {
+                relativePath: "frequency-alert.json",
+                content: JSON.stringify({ alert: tier2ScrutinyNote }, null, 2),
+              },
+            ]
+          : []),
       ],
     });
 
@@ -650,6 +903,19 @@ export async function cleanupSessionSanitizationArtifacts(params: {
     agentId: params.agentId,
     sessionId: params.sessionId,
   });
+  // Also reset in-memory frequency state so cleanup is complete.
+  if (params.sessionId) {
+    sessionFrequencyState.delete(params.sessionId);
+  }
+}
+
+/**
+ * Reset the in-memory frequency tracking state for a session.
+ * Called on session reset so that a fresh session starts with a clean score.
+ * Per-spec: "Session restart resets the frequency score."
+ */
+export function resetSessionFrequencyState(sessionId: string): void {
+  sessionFrequencyState.delete(sessionId);
 }
 
 // ---------------------------------------------------------------------------
@@ -800,7 +1066,145 @@ export async function processMcpToolResult(params: {
     now,
   });
 
-  // Tier 1 structural pre-filter.
+  // --- Stage 1: Parallel pre-filter (syntactic + schema) ---
+  const validationCfg = resolveSessionSanitizationValidationConfig(params.cfg);
+  const mcpPreFilter = await runPreFilter({
+    input: params.rawResult,
+    source: "mcp",
+    syntacticConfig: validationCfg.syntactic,
+  });
+
+  // Emit syntactic audit events
+  if (validationCfg.syntactic.enabled) {
+    const syntacticEvent =
+      !mcpPreFilter.syntactic.pass
+        ? "syntactic_fail"
+        : mcpPreFilter.syntactic.flags.length > 0
+          ? "syntactic_flags"
+          : "syntactic_pass";
+    await appendSessionMemoryAuditEntry({
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+      entry: {
+        event: syntacticEvent,
+        timestamp: nowIso(now),
+        toolCallId: params.toolCallId,
+        server: params.server,
+        ruleIds: mcpPreFilter.syntactic.ruleIds,
+        flags: mcpPreFilter.syntactic.flags,
+        stage: "syntactic",
+        profile: "mcp",
+      },
+    });
+  }
+
+  // Emit schema audit event
+  if (validationCfg.schema.enabled) {
+    await appendSessionMemoryAuditEntry({
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+      entry: {
+        event: mcpPreFilter.schema.pass ? "schema_pass" : "schema_fail",
+        timestamp: nowIso(now),
+        toolCallId: params.toolCallId,
+        server: params.server,
+        violations: mcpPreFilter.schema.violations,
+        ruleIds: mcpPreFilter.schema.ruleIds,
+        stage: "schema",
+        profile: "mcp",
+      },
+    });
+  }
+
+  // --- Frequency tracking update ---
+  let mcpFrequencyTier: EscalationTier = "none";
+  let mcpFrequencyScore = 0;
+  if (validationCfg.frequency.enabled) {
+    // Always check for already-terminated sessions — even clean payloads must be blocked.
+    const existingFreqState = sessionFrequencyState.get(params.sessionId);
+    if (existingFreqState?.terminated) {
+      mcpFrequencyTier = "tier3";
+      mcpFrequencyScore = existingFreqState.lastScore;
+    } else if (mcpPreFilter.allRuleIds.length > 0) {
+      const freq = updateFrequencyScore(
+        params.sessionId,
+        mcpPreFilter.allRuleIds,
+        now,
+        validationCfg.frequency,
+      );
+      mcpFrequencyTier = freq.tier;
+      mcpFrequencyScore = freq.newScore;
+      if (mcpFrequencyTier !== "none") {
+        const thresholdForTier =
+          mcpFrequencyTier === "tier3"
+            ? validationCfg.frequency.thresholds.tier3
+            : mcpFrequencyTier === "tier2"
+              ? validationCfg.frequency.thresholds.tier2
+              : validationCfg.frequency.thresholds.tier1;
+        await emitFrequencyEscalation({
+          agentId: params.agentId,
+          sessionId: params.sessionId,
+          tier: mcpFrequencyTier,
+          newScore: mcpFrequencyScore,
+          threshold: thresholdForTier,
+          recentFlags: mcpPreFilter.allFlags.slice(0, 10),
+          now,
+          source: "mcp",
+        });
+      }
+    }
+  }
+
+  // Tier 3 — session terminated; block without further processing
+  if (mcpFrequencyTier === "tier3") {
+    return {
+      ...buildBlockedResult(
+        ["session terminated: sustained suspicious input frequency"],
+        "blocked: session terminated (frequency tier3)",
+        1,
+      ),
+      terminated: true,
+    };
+  }
+
+  // --- Two-pass gating (MCP) ---
+  const isMcpTwoPassDefinitiveFail =
+    validationCfg.twoPass.enabled &&
+    mcpFrequencyTier === "none" && // Frequency tier1+ overrides two-pass skip
+    !mcpPreFilter.pass &&
+    mcpPreFilter.allRuleIds.some((id) => validationCfg.twoPass.hardBlockRules.includes(id));
+
+  if (isMcpTwoPassDefinitiveFail) {
+    const blockRuleIds = mcpPreFilter.allRuleIds.filter((id) =>
+      validationCfg.twoPass.hardBlockRules.includes(id),
+    );
+    await appendSessionMemoryAuditEntry({
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+      entry: {
+        event: "twopass_hard_block",
+        timestamp: nowIso(now),
+        toolCallId: params.toolCallId,
+        server: params.server,
+        ruleIds: blockRuleIds,
+        reason: "skipped semantic pass — hard block rule triggered",
+        profile: "mcp",
+      },
+    });
+    return buildBlockedResult(
+      mcpPreFilter.allFlags,
+      "blocked: syntactic hard block rule",
+      1,
+    );
+  }
+
+  // Build tier2 enhanced scrutiny note
+  const mcpTier2ScrutinyNote =
+    mcpFrequencyTier === "tier2"
+      ? `[session frequency alert: elevated injection pattern frequency detected. Apply heightened scrutiny. Recent flags: ${mcpPreFilter.allFlags.slice(0, 5).join("; ")}]`
+      : undefined;
+
+  // Tier 1 structural pre-filter (existing MCP-specific checks).
   const tier1 = runTier1PreFilter({ rawResult: params.rawResult });
 
   if (tier1.blocked) {
@@ -869,6 +1273,32 @@ export async function processMcpToolResult(params: {
                 patternsMatched: tier1.patternsMatched.filter((id) =>
                   tier1.annotationFlags.some((f) => f.startsWith(id)),
                 ),
+              },
+              null,
+              2,
+            ),
+          },
+        ]
+      : []),
+    // Inject tier2 frequency alert when elevated scrutiny is needed
+    ...(mcpTier2ScrutinyNote
+      ? [
+          {
+            relativePath: "frequency-alert.json",
+            content: JSON.stringify({ alert: mcpTier2ScrutinyNote }, null, 2),
+          },
+        ]
+      : []),
+    // Inject syntactic pre-filter flags when they exist (hints for semantic pass)
+    ...(mcpPreFilter.allRuleIds.length > 0 && !isMcpTwoPassDefinitiveFail
+      ? [
+          {
+            relativePath: "stage1-flags.json",
+            content: JSON.stringify(
+              {
+                ruleIds: mcpPreFilter.allRuleIds,
+                flags: mcpPreFilter.allFlags,
+                note: "Syntactic pre-filter detected patterns. Use as hints — make your own independent judgment.",
               },
               null,
               2,

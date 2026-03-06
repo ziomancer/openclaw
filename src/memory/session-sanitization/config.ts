@@ -5,6 +5,7 @@ import { resolveAgentModelPrimaryValue } from "../../config/model-input.js";
 import type { AgentModelConfig } from "../../config/types.agents-shared.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
+import type { AuditVerbosity } from "./types.js";
 
 const log = createSubsystemLogger("memory/session-sanitization/config");
 
@@ -97,6 +98,103 @@ export function isMcpServerTrusted(params: {
 }
 
 export const UNKNOWN_MCP_SERVER = "unknown";
+
+// ---------------------------------------------------------------------------
+// Resolved validation config
+// ---------------------------------------------------------------------------
+
+const DEFAULT_FREQUENCY_WEIGHTS: Record<string, number> = {
+  "injection.*": 10,
+  "structural.*": 5,
+  "schema.extra-field": 8,
+  "schema.type-mismatch": 6,
+  "schema.missing-field": 4,
+};
+
+const DEFAULT_TWOPASS_HARD_BLOCK_RULES: string[] = [
+  "injection.ignore-previous",
+  "injection.system-override",
+  "injection.role-switch-capability",
+];
+
+export type ResolvedValidationConfig = {
+  syntactic: {
+    enabled: boolean;
+    /** Maximum raw payload size in bytes. Default: 524288 (512KB). */
+    maxPayloadBytes: number;
+    /** Maximum JSON nesting depth. Default: 10. */
+    maxJsonDepth: number;
+  };
+  schema: {
+    enabled: boolean;
+  };
+  twoPass: {
+    /** When true, hard-block rules skip the semantic sub-agent. Default: false. */
+    enabled: boolean;
+    /** Rule IDs that trigger a definitive block without a semantic pass. */
+    hardBlockRules: string[];
+  };
+  frequency: {
+    enabled: boolean;
+    /** Half-life for exponential decay scoring in milliseconds. Default: 60000. */
+    halfLifeMs: number;
+    /** Weight per rule ID prefix. Prefix patterns end with ".*". */
+    weights: Record<string, number>;
+    thresholds: {
+      tier1: number;
+      tier2: number;
+      tier3: number;
+    };
+  };
+  audit: {
+    enabled: boolean;
+    verbosity: AuditVerbosity;
+    retentionDays: number;
+    rawRetentionDays: number;
+  };
+};
+
+export function resolveSessionSanitizationValidationConfig(
+  cfg: OpenClawConfig | undefined,
+): ResolvedValidationConfig {
+  const raw = cfg?.memory?.sessions?.sanitization;
+  const retentionDays = raw?.audit?.retentionDays ?? 30;
+  return {
+    syntactic: {
+      enabled: raw?.syntactic?.enabled !== false,
+      maxPayloadBytes: raw?.syntactic?.maxPayloadBytes ?? 524_288,
+      maxJsonDepth: raw?.syntactic?.maxJsonDepth ?? 10,
+    },
+    schema: {
+      enabled: raw?.schema?.enabled !== false,
+    },
+    twoPass: {
+      enabled: raw?.twoPass?.enabled === true,
+      hardBlockRules: Array.isArray(raw?.twoPass?.hardBlockRules)
+        ? (raw.twoPass.hardBlockRules as string[])
+        : DEFAULT_TWOPASS_HARD_BLOCK_RULES,
+    },
+    frequency: {
+      enabled: raw?.frequency?.enabled !== false,
+      halfLifeMs: raw?.frequency?.halfLifeMs ?? 60_000,
+      weights:
+        raw?.frequency?.weights && Object.keys(raw.frequency.weights).length > 0
+          ? raw.frequency.weights
+          : DEFAULT_FREQUENCY_WEIGHTS,
+      thresholds: {
+        tier1: raw?.frequency?.thresholds?.tier1 ?? 15,
+        tier2: raw?.frequency?.thresholds?.tier2 ?? 30,
+        tier3: raw?.frequency?.thresholds?.tier3 ?? 50,
+      },
+    },
+    audit: {
+      enabled: raw?.audit?.enabled !== false,
+      verbosity: raw?.audit?.verbosity ?? "standard",
+      retentionDays,
+      rawRetentionDays: raw?.audit?.rawRetentionDays ?? retentionDays,
+    },
+  };
+}
 
 /**
  * Returns true when the tool name is claimed by at least one server in
