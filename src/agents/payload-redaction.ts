@@ -10,10 +10,14 @@ function redactImageSource(source: Record<string, unknown>): Record<string, unkn
   if (source.type !== "base64" || typeof source.data !== "string") {
     return source;
   }
+  return { ...source, data: redactBase64Data(source.data) };
+}
+
+function redactBase64Data(data: string): string {
   // Approximate decoded byte length from base64 length.
-  const byteLen = Math.ceil((source.data.length * 3) / 4);
+  const byteLen = Math.ceil((data.length * 3) / 4);
   const kb = Math.round(byteLen / 1024);
-  return { ...source, data: `<redacted:${kb}kb>` };
+  return `<redacted:${kb}kb>`;
 }
 
 function redactContentBlock(block: unknown): unknown {
@@ -21,14 +25,25 @@ function redactContentBlock(block: unknown): unknown {
     return block;
   }
   const b = block as Record<string, unknown>;
-  if (b.type !== "image" || !b.source || typeof b.source !== "object") {
+  if (b.type !== "image") {
     return block;
   }
-  const redacted = redactImageSource(b.source as Record<string, unknown>);
-  if (redacted === b.source) {
-    return block;
+  let next: Record<string, unknown> | null = null;
+
+  if (b.source && typeof b.source === "object") {
+    const redacted = redactImageSource(b.source as Record<string, unknown>);
+    if (redacted !== b.source) {
+      next = { ...(next ?? b), source: redacted };
+    }
   }
-  return { ...b, source: redacted };
+  if (typeof b.data === "string") {
+    const redactedData = redactBase64Data(b.data);
+    if (redactedData !== b.data) {
+      next = { ...(next ?? b), data: redactedData };
+    }
+  }
+
+  return next ?? block;
 }
 
 function redactMessageContent(content: unknown): unknown {
@@ -64,7 +79,7 @@ function redactDeep(value: unknown): unknown {
     const next = value.map(redactDeep);
     return next.every((v, i) => v === (value as unknown[])[i]) ? value : next;
   }
-  // Try content-block redaction first (fast path for {type:"image", source:...}).
+  // Try content-block redaction first (fast path for {type:"image", source|data}).
   const asBlock = redactContentBlock(value);
   if (asBlock !== value) {
     return asBlock;

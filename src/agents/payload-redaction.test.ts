@@ -9,6 +9,16 @@ const redactedImageBlock = {
   type: "image",
   source: { type: "base64", media_type: "image/png", data: "<redacted:3kb>" },
 };
+const directImageBlock = {
+  type: "image",
+  data: "A".repeat(4096),
+  mimeType: "image/png",
+};
+const redactedDirectImageBlock = {
+  type: "image",
+  data: "<redacted:3kb>",
+  mimeType: "image/png",
+};
 const textBlock = { type: "text", text: "hello" };
 
 describe("redactImageDataForDiagnostics", () => {
@@ -20,6 +30,15 @@ describe("redactImageDataForDiagnostics", () => {
       };
       const result = redactImageDataForDiagnostics(payload) as typeof payload;
       expect((result.messages[0].content as unknown[])[0]).toEqual(redactedImageBlock);
+    });
+
+    it("redacts direct image data blocks inside messages", () => {
+      const payload = {
+        model: "claude-3",
+        messages: [{ role: "user", content: [directImageBlock] }],
+      };
+      const result = redactImageDataForDiagnostics(payload) as typeof payload;
+      expect((result.messages[0].content as unknown[])[0]).toEqual(redactedDirectImageBlock);
     });
 
     it("returns the same reference when no images are present", () => {
@@ -64,8 +83,23 @@ describe("redactImageDataForDiagnostics", () => {
       expect((result.options.images as unknown[])[0]).toEqual(redactedImageBlock);
     });
 
+    it("redacts direct image data in options.images", () => {
+      const payload = {
+        options: {
+          images: [directImageBlock],
+        },
+      };
+      const result = redactImageDataForDiagnostics(payload) as typeof payload;
+      expect((result.options.images as unknown[])[0]).toEqual(redactedDirectImageBlock);
+    });
+
     it("returns same reference when options.images contains no base64 blocks", () => {
       const payload = { options: { images: [{ type: "text", text: "hi" }] } };
+      expect(redactImageDataForDiagnostics(payload)).toBe(payload);
+    });
+
+    it("does not redact non-image blocks with data fields", () => {
+      const payload = { options: { images: [{ type: "text", data: "not-image-data" }] } };
       expect(redactImageDataForDiagnostics(payload)).toBe(payload);
     });
 
