@@ -63,7 +63,9 @@ export type SessionMemoryAuditEvent =
   | "output_diff"
   | "raw_input_captured"
   | "raw_output_captured"
-  | "audit_config_loaded";
+  | "audit_config_loaded"
+  // --- Context-aware sanitization (context-aware-sanitization-spec-v2) ---
+  | "context_profile_loaded";
 
 export type SessionMemoryAuditEntry = {
   event: SessionMemoryAuditEvent;
@@ -128,6 +130,23 @@ export type SessionMemoryAuditEntry = {
   rawInputEnabled?: boolean;
   encryptionEnabled?: boolean;
   retentionDays?: number;
+  // --- Context-aware sanitization fields (context_profile_loaded events) ---
+  /** Operator context profile ID (e.g. "general", "customer-service"). */
+  contextProfile?: string;
+  /** True when the active profile is a custom (operator-defined) profile. */
+  isCustom?: boolean;
+  /** Built-in base profile for custom profiles. */
+  baseProfile?: string;
+  /** Resolved schema strictness at the time of context_profile_loaded. */
+  schemaStrictness?: "strict" | "lenient" | { transcript: string; mcp: string };
+  /** Effective audit verbosity floor from the active profile. */
+  auditVerbosityFloor?: string;
+  /** True when the active profile applied frequency weight overrides. */
+  frequencyOverridesApplied?: boolean;
+  /** Rule IDs demoted to flags-only by the profile's syntacticEmphasis.suppressRules. */
+  syntacticSuppressedRules?: string[];
+  /** Rule IDs added for emphasis by the profile's syntacticEmphasis.addRules. */
+  syntacticAddedRules?: string[];
 };
 
 export type SessionMemoryMcpRawEntry = {
@@ -274,6 +293,7 @@ export const sessionMemoryAuditEntrySchema = z
       "raw_input_captured",
       "raw_output_captured",
       "audit_config_loaded",
+      "context_profile_loaded",
     ]),
     timestamp: z.string(),
     messageId: z.string().optional(),
@@ -324,6 +344,21 @@ export const sessionMemoryAuditEntrySchema = z
     rawInputEnabled: z.boolean().optional(),
     encryptionEnabled: z.boolean().optional(),
     retentionDays: z.number().optional(),
+    // context_profile_loaded fields
+    contextProfile: z.string().optional(),
+    isCustom: z.boolean().optional(),
+    baseProfile: z.string().optional(),
+    schemaStrictness: z
+      .union([
+        z.literal("strict"),
+        z.literal("lenient"),
+        z.object({ transcript: z.string(), mcp: z.string() }),
+      ])
+      .optional(),
+    auditVerbosityFloor: z.string().optional(),
+    frequencyOverridesApplied: z.boolean().optional(),
+    syntacticSuppressedRules: z.array(z.string()).optional(),
+    syntacticAddedRules: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -430,38 +465,37 @@ export type RuleTaxonomyEntry = {
   stage: "syntactic" | "schema" | "semantic";
 };
 
-export const RULE_TAXONOMY: Readonly<Record<string, RuleTaxonomyEntry>> =
-  Object.freeze({
-    "injection.ignore-previous": { category: "injection", stage: "syntactic" },
-    "injection.system-override": { category: "injection", stage: "syntactic" },
-    "injection.role-switch-capability": {
-      category: "injection",
-      stage: "syntactic",
-    },
-    "injection.role-switch-only": { category: "injection", stage: "semantic" },
-    "injection.direct-address": { category: "injection", stage: "semantic" },
-    "credential.api-key-pattern": { category: "credential", stage: "semantic" },
-    "credential.password-pattern": { category: "credential", stage: "semantic" },
-    "credential.env-var-pattern": { category: "credential", stage: "semantic" },
-    "scope-creep.permission-escalation": {
-      category: "scope-creep",
-      stage: "semantic",
-    },
-    "scope-creep.cross-agent-reference": {
-      category: "scope-creep",
-      stage: "semantic",
-    },
-    "structural.oversized-payload": { category: "structural", stage: "syntactic" },
-    "structural.excessive-depth": { category: "structural", stage: "syntactic" },
-    "structural.encoding-trick": { category: "structural", stage: "syntactic" },
-    "structural.binary-content": { category: "structural", stage: "syntactic" },
-    "schema.missing-field": { category: "schema", stage: "schema" },
-    "schema.type-mismatch": { category: "schema", stage: "schema" },
-    "schema.extra-field": { category: "schema", stage: "schema" },
-    "semantic.safe-false": { category: "semantic", stage: "semantic" },
-    "semantic.low-confidence": { category: "semantic", stage: "semantic" },
-    "semantic.malformed-output": { category: "semantic", stage: "semantic" },
-  });
+export const RULE_TAXONOMY: Readonly<Record<string, RuleTaxonomyEntry>> = Object.freeze({
+  "injection.ignore-previous": { category: "injection", stage: "syntactic" },
+  "injection.system-override": { category: "injection", stage: "syntactic" },
+  "injection.role-switch-capability": {
+    category: "injection",
+    stage: "syntactic",
+  },
+  "injection.role-switch-only": { category: "injection", stage: "semantic" },
+  "injection.direct-address": { category: "injection", stage: "semantic" },
+  "credential.api-key-pattern": { category: "credential", stage: "semantic" },
+  "credential.password-pattern": { category: "credential", stage: "semantic" },
+  "credential.env-var-pattern": { category: "credential", stage: "semantic" },
+  "scope-creep.permission-escalation": {
+    category: "scope-creep",
+    stage: "semantic",
+  },
+  "scope-creep.cross-agent-reference": {
+    category: "scope-creep",
+    stage: "semantic",
+  },
+  "structural.oversized-payload": { category: "structural", stage: "syntactic" },
+  "structural.excessive-depth": { category: "structural", stage: "syntactic" },
+  "structural.encoding-trick": { category: "structural", stage: "syntactic" },
+  "structural.binary-content": { category: "structural", stage: "syntactic" },
+  "schema.missing-field": { category: "schema", stage: "schema" },
+  "schema.type-mismatch": { category: "schema", stage: "schema" },
+  "schema.extra-field": { category: "schema", stage: "schema" },
+  "semantic.safe-false": { category: "semantic", stage: "semantic" },
+  "semantic.low-confidence": { category: "semantic", stage: "semantic" },
+  "semantic.malformed-output": { category: "semantic", stage: "semantic" },
+});
 
 // ---------------------------------------------------------------------------
 // Alert payload (audit-alerting-spec-v2.1)

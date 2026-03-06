@@ -1,7 +1,8 @@
-import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { OpenClawConfig } from "../../../config/config.js";
+import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { AlertPayload, AuditEventRecord, SessionMemoryAuditEntry } from "../types.js";
 import { resolveAlertingConfig } from "./config.js";
+import { appendAlertLogEntry } from "./log.js";
 import { ALL_RULES } from "./rules.js";
 import {
   addToIndex,
@@ -15,7 +16,6 @@ import {
   recordFired,
   sweepIndex,
 } from "./state.js";
-import { appendAlertLogEntry } from "./log.js";
 import { deliverWebhook } from "./webhook.js";
 
 export { getDailySummary, resetAlertingState } from "./state.js";

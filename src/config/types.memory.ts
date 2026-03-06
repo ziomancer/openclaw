@@ -73,6 +73,13 @@ export type MemorySessionSanitizationAuditConfig = {
   rawRetentionDays?: number;
 };
 
+export type MemorySessionSanitizationContextConfig = {
+  /** Active context profile ID. Built-in: "general" | "customer-service" | "code-generation" | "research" | "admin". Default: "general". */
+  profile?: string;
+  /** Path to a custom profile JSON file. Required when profile is not a built-in name. */
+  customProfilePath?: string;
+};
+
 export type MemorySessionSanitizationConfig = {
   enabled?: boolean;
   model?: AgentModelConfig;
@@ -84,6 +91,7 @@ export type MemorySessionSanitizationConfig = {
   twoPass?: MemorySessionSanitizationTwoPassConfig;
   frequency?: MemorySessionSanitizationFrequencyConfig;
   audit?: MemorySessionSanitizationAuditConfig;
+  context?: MemorySessionSanitizationContextConfig;
 };
 
 export type MemoryQmdConfig = {

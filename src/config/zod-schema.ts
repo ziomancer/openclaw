@@ -159,10 +159,7 @@ const AlertingRulesSchema = z
 const AlertingSchema = z
   .object({
     enabled: z.boolean().optional(),
-    channels: z
-      .object({ webhook: AlertingWebhookSchema.optional() })
-      .strict()
-      .optional(),
+    channels: z.object({ webhook: AlertingWebhookSchema.optional() }).strict().optional(),
     suppression: z.object({ windowMinutes: z.number().optional() }).strict().optional(),
     rateLimit: z
       .object({
@@ -228,11 +225,16 @@ const MemorySessionSanitizationFrequencySchema = z
 const MemorySessionSanitizationAuditSchema = z
   .object({
     enabled: z.boolean().optional(),
-    verbosity: z
-      .enum(["minimal", "standard", "high", "maximum"])
-      .optional(),
+    verbosity: z.enum(["minimal", "standard", "high", "maximum"]).optional(),
     retentionDays: z.number().optional(),
     rawRetentionDays: z.number().optional(),
+  })
+  .strict();
+
+const MemorySessionSanitizationContextSchema = z
+  .object({
+    profile: z.string().optional(),
+    customProfilePath: z.string().optional(),
   })
   .strict();
 
@@ -248,6 +250,7 @@ const MemorySessionSanitizationSchema = z
     twoPass: MemorySessionSanitizationTwoPassSchema.optional(),
     frequency: MemorySessionSanitizationFrequencySchema.optional(),
     audit: MemorySessionSanitizationAuditSchema.optional(),
+    context: MemorySessionSanitizationContextSchema.optional(),
   })
   .strict();
 

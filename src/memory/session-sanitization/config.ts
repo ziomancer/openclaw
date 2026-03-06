@@ -5,6 +5,11 @@ import { resolveAgentModelPrimaryValue } from "../../config/model-input.js";
 import type { AgentModelConfig } from "../../config/types.agents-shared.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
+import {
+  resolveContextProfile,
+  type ResolvedContextProfile,
+  type SchemaStrictness,
+} from "./context-profile.js";
 import type { AuditVerbosity } from "./types.js";
 
 const log = createSubsystemLogger("memory/session-sanitization/config");
@@ -124,6 +129,8 @@ export type ResolvedValidationConfig = {
     maxPayloadBytes: number;
     /** Maximum JSON nesting depth. Default: 10. */
     maxJsonDepth: number;
+    /** Rule IDs demoted to flags-only by the active context profile. */
+    suppressRules: string[];
   };
   schema: {
     enabled: boolean;
@@ -152,18 +159,80 @@ export type ResolvedValidationConfig = {
     retentionDays: number;
     rawRetentionDays: number;
   };
+  /** Resolved context profile settings. */
+  context: {
+    profileId: string;
+    isCustom: boolean;
+    baseProfile: string;
+    schemaStrictness: SchemaStrictness;
+    rejectUndeclaredToolSchemas: boolean;
+    syntacticAddRules: string[];
+    syntacticSuppressRules: string[];
+    auditVerbosityFloor: AuditVerbosity;
+    frequencyOverridesApplied: boolean;
+    promptSuffix: string;
+  };
 };
+
+export type { ResolvedContextProfile, SchemaStrictness };
+
+const VERBOSITY_RANK: Record<AuditVerbosity, number> = {
+  minimal: 0,
+  standard: 1,
+  high: 2,
+  maximum: 3,
+};
+
+function maxVerbosity(a: AuditVerbosity, b: AuditVerbosity): AuditVerbosity {
+  return VERBOSITY_RANK[a] >= VERBOSITY_RANK[b] ? a : b;
+}
 
 export function resolveSessionSanitizationValidationConfig(
   cfg: OpenClawConfig | undefined,
 ): ResolvedValidationConfig {
   const raw = cfg?.memory?.sessions?.sanitization;
   const retentionDays = raw?.audit?.retentionDays ?? 30;
+
+  // Resolve context profile — throws on bad custom profile config
+  let profile: ResolvedContextProfile;
+  try {
+    profile = resolveContextProfile(raw?.context);
+  } catch (error) {
+    log.error("failed to resolve context profile, falling back to 'general'", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    profile = resolveContextProfile(undefined);
+  }
+
+  // Merge frequency weights: profile overrides on top of global config or defaults
+  const globalWeights =
+    raw?.frequency?.weights && Object.keys(raw.frequency.weights).length > 0
+      ? raw.frequency.weights
+      : DEFAULT_FREQUENCY_WEIGHTS;
+  const mergedWeights: Record<string, number> = { ...globalWeights };
+  for (const [k, v] of Object.entries(profile.frequencyWeightOverrides)) {
+    mergedWeights[k] = v;
+  }
+  const frequencyOverridesApplied = Object.keys(profile.frequencyWeightOverrides).length > 0;
+
+  // Merge frequency thresholds: profile overrides individual tiers
+  const globalTier1 = raw?.frequency?.thresholds?.tier1 ?? 15;
+  const globalTier2 = raw?.frequency?.thresholds?.tier2 ?? 30;
+  const globalTier3 = raw?.frequency?.thresholds?.tier3 ?? 50;
+  const mergedTier1 = profile.frequencyThresholdOverrides.tier1 ?? globalTier1;
+  const mergedTier2 = profile.frequencyThresholdOverrides.tier2 ?? globalTier2;
+  const mergedTier3 = profile.frequencyThresholdOverrides.tier3 ?? globalTier3;
+
+  // Effective audit verbosity: max(globalVerbosity, profileVerbosityFloor)
+  const globalVerbosity: AuditVerbosity = raw?.audit?.verbosity ?? "standard";
+  const effectiveVerbosity = maxVerbosity(globalVerbosity, profile.auditVerbosityFloor);
+
   return {
     syntactic: {
       enabled: raw?.syntactic?.enabled !== false,
       maxPayloadBytes: raw?.syntactic?.maxPayloadBytes ?? 524_288,
       maxJsonDepth: raw?.syntactic?.maxJsonDepth ?? 10,
+      suppressRules: profile.syntacticEmphasis.suppressRules,
     },
     schema: {
       enabled: raw?.schema?.enabled !== false,
@@ -177,21 +246,30 @@ export function resolveSessionSanitizationValidationConfig(
     frequency: {
       enabled: raw?.frequency?.enabled !== false,
       halfLifeMs: raw?.frequency?.halfLifeMs ?? 60_000,
-      weights:
-        raw?.frequency?.weights && Object.keys(raw.frequency.weights).length > 0
-          ? raw.frequency.weights
-          : DEFAULT_FREQUENCY_WEIGHTS,
+      weights: mergedWeights,
       thresholds: {
-        tier1: raw?.frequency?.thresholds?.tier1 ?? 15,
-        tier2: raw?.frequency?.thresholds?.tier2 ?? 30,
-        tier3: raw?.frequency?.thresholds?.tier3 ?? 50,
+        tier1: mergedTier1,
+        tier2: mergedTier2,
+        tier3: mergedTier3,
       },
     },
     audit: {
       enabled: raw?.audit?.enabled !== false,
-      verbosity: raw?.audit?.verbosity ?? "standard",
+      verbosity: effectiveVerbosity,
       retentionDays,
       rawRetentionDays: raw?.audit?.rawRetentionDays ?? retentionDays,
+    },
+    context: {
+      profileId: profile.id,
+      isCustom: profile.isCustom,
+      baseProfile: profile.baseProfile,
+      schemaStrictness: profile.schemaStrictness,
+      rejectUndeclaredToolSchemas: profile.rejectUndeclaredToolSchemas,
+      syntacticAddRules: profile.syntacticEmphasis.addRules,
+      syntacticSuppressRules: profile.syntacticEmphasis.suppressRules,
+      auditVerbosityFloor: profile.auditVerbosityFloor,
+      frequencyOverridesApplied,
+      promptSuffix: profile.promptSuffix,
     },
   };
 }

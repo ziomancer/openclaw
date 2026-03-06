@@ -43,10 +43,7 @@ const AGENT_ID = "main";
 const SESSION_ID = "sess-alert-1";
 const NOW = Date.now();
 
-function makeEvent(
-  event: string,
-  extra: Partial<AuditEventRecord> = {},
-): AuditEventRecord {
+function makeEvent(event: string, extra: Partial<AuditEventRecord> = {}): AuditEventRecord {
   return {
     event: event as AuditEventRecord["event"],
     timestamp: new Date(NOW).toISOString(),
@@ -65,7 +62,11 @@ function makeCfg(overrides?: Partial<OpenClawConfig["alerting"]>): OpenClawConfi
     memory: {
       sessions: {
         sanitization: {
-          mcp: { enabled: true, trustedServers: ["trusted-server"], blockOnSandboxUnavailable: true },
+          mcp: {
+            enabled: true,
+            trustedServers: ["trusted-server"],
+            blockOnSandboxUnavailable: true,
+          },
         },
       },
     },
@@ -157,14 +158,25 @@ describe("event index", () => {
   it("addToIndex and queryIndex find recent events", () => {
     const entry = makeEvent("syntactic_fail");
     addToIndex(entry, NOW);
-    const results = queryIndex({ event: "syntactic_fail", agentId: AGENT_ID, windowMs: 60_000, now: NOW });
+    const results = queryIndex({
+      event: "syntactic_fail",
+      agentId: AGENT_ID,
+      windowMs: 60_000,
+      now: NOW,
+    });
     expect(results).toHaveLength(1);
   });
 
   it("queryIndex filters by sessionId", () => {
     addToIndex(makeEvent("syntactic_fail", { sessionId: "sess-a" }), NOW);
     addToIndex(makeEvent("syntactic_fail", { sessionId: "sess-b" }), NOW);
-    const results = queryIndex({ event: "syntactic_fail", agentId: AGENT_ID, sessionId: "sess-a", windowMs: 60_000, now: NOW });
+    const results = queryIndex({
+      event: "syntactic_fail",
+      agentId: AGENT_ID,
+      sessionId: "sess-a",
+      windowMs: 60_000,
+      now: NOW,
+    });
     expect(results).toHaveLength(1);
     expect(results[0]?.sessionId).toBe("sess-a");
   });
@@ -180,7 +192,12 @@ describe("event index", () => {
     const old = NOW - 70_000;
     addToIndex(makeEvent("syntactic_fail"), old);
     addToIndex(makeEvent("syntactic_fail"), NOW);
-    const results = queryIndex({ event: "syntactic_fail", agentId: AGENT_ID, windowMs: 60_000, now: NOW });
+    const results = queryIndex({
+      event: "syntactic_fail",
+      agentId: AGENT_ID,
+      windowMs: 60_000,
+      now: NOW,
+    });
     expect(results).toHaveLength(1); // only the recent one
   });
 
@@ -188,7 +205,12 @@ describe("event index", () => {
     addToIndex(makeEvent("syntactic_fail"), NOW - 70_000);
     addToIndex(makeEvent("syntactic_fail"), NOW);
     sweepIndex(60_000, NOW);
-    const results = queryIndex({ event: "syntactic_fail", agentId: AGENT_ID, windowMs: 120_000, now: NOW });
+    const results = queryIndex({
+      event: "syntactic_fail",
+      agentId: AGENT_ID,
+      windowMs: 120_000,
+      now: NOW,
+    });
     expect(results).toHaveLength(1);
   });
 });
@@ -256,7 +278,9 @@ describe("daily summary", () => {
 // ---------------------------------------------------------------------------
 
 describe("evaluateSyntacticFailBurst", () => {
-  const cfg = resolveAlertingConfig(makeCfg({ rules: { syntacticFailBurst: { count: 3, windowMinutes: 10 } } }));
+  const cfg = resolveAlertingConfig(
+    makeCfg({ rules: { syntacticFailBurst: { count: 3, windowMinutes: 10 } } }),
+  );
 
   it("returns null for non-syntactic_fail events", () => {
     const entry = makeEvent("sanitized_pass");
@@ -330,7 +354,9 @@ describe("evaluateTrustedToolSchemaFail", () => {
       makeCfg({ rules: { trustedToolSchemaFail: { enabled: false } } }),
     );
     const entry = makeEvent("schema_fail", { server: "trusted-server" });
-    expect(evaluateTrustedToolSchemaFail({ entry, cfg: disabledCfg, recentContext: [], now: NOW })).toBeNull();
+    expect(
+      evaluateTrustedToolSchemaFail({ entry, cfg: disabledCfg, recentContext: [], now: NOW }),
+    ).toBeNull();
   });
 });
 
@@ -361,7 +387,9 @@ describe("evaluateFrequencyEscalation", () => {
       makeCfg({ rules: { frequencyEscalation: { tier2: { enabled: false } } } }),
     );
     const entry = makeEvent("frequency_escalation_tier2");
-    expect(evaluateFrequencyEscalation({ entry, cfg: disabledCfg, recentContext: [], now: NOW })).toBeNull();
+    expect(
+      evaluateFrequencyEscalation({ entry, cfg: disabledCfg, recentContext: [], now: NOW }),
+    ).toBeNull();
   });
 
   it("never suppresses tier3 even when tier3 config is false (cannot be disabled)", () => {
@@ -371,7 +399,9 @@ describe("evaluateFrequencyEscalation", () => {
     );
     expect(cfg2.rules.frequencyEscalation.tier3).toBe(true);
     const entry = makeEvent("frequency_escalation_tier3");
-    expect(evaluateFrequencyEscalation({ entry, cfg: cfg2, recentContext: [], now: NOW })).not.toBeNull();
+    expect(
+      evaluateFrequencyEscalation({ entry, cfg: cfg2, recentContext: [], now: NOW }),
+    ).not.toBeNull();
   });
 });
 
@@ -428,12 +458,16 @@ describe("evaluateSemanticCatch", () => {
       makeCfg({ rules: { semanticCatchNoSyntacticFlag: { enabled: false } } }),
     );
     const entry = makeEvent("sanitized_block", { tier: 2 });
-    expect(evaluateSemanticCatch({ entry, cfg: disabledCfg, recentContext: [], now: NOW })).toBeNull();
+    expect(
+      evaluateSemanticCatch({ entry, cfg: disabledCfg, recentContext: [], now: NOW }),
+    ).toBeNull();
   });
 });
 
 describe("evaluateSyntacticFailBurst — cross-session aggregation", () => {
-  const cfg = resolveAlertingConfig(makeCfg({ rules: { syntacticFailBurst: { count: 3, windowMinutes: 10 } } }));
+  const cfg = resolveAlertingConfig(
+    makeCfg({ rules: { syntacticFailBurst: { count: 3, windowMinutes: 10 } } }),
+  );
 
   it("counts syntactic_fail across different sessions for the same agent", () => {
     // 3 events from 3 different sessions — should still trigger
@@ -453,7 +487,9 @@ describe("evaluateSemanticCatch — messageId correlation", () => {
   it("correlates by messageId when present (primary join) — fires when syntactic_pass found", () => {
     const entry = makeEvent("sanitized_block", { tier: 2, messageId: "msg-1", toolCallId: "tc-1" });
     // syntactic_pass for same messageId → Tier 1 passed, Tier 2 caught it → alert
-    const recentContext = [makeEvent("syntactic_pass", { messageId: "msg-1", toolCallId: "tc-99" })];
+    const recentContext = [
+      makeEvent("syntactic_pass", { messageId: "msg-1", toolCallId: "tc-99" }),
+    ];
     const alert = evaluateSemanticCatch({ entry, cfg, recentContext, now: NOW });
     expect(alert).not.toBeNull();
     expect(alert?.ruleId).toBe("semanticCatchNoSyntacticFlag");
@@ -487,7 +523,9 @@ describe("evaluateSemanticCatch — messageId correlation", () => {
 });
 
 describe("evaluateWriteFailSpike", () => {
-  const cfg = resolveAlertingConfig(makeCfg({ rules: { writeFailSpike: { count: 3, windowMinutes: 5 } } }));
+  const cfg = resolveAlertingConfig(
+    makeCfg({ rules: { writeFailSpike: { count: 3, windowMinutes: 5 } } }),
+  );
 
   it("returns null for non-write_failed events", () => {
     const entry = makeEvent("sanitized_pass");
@@ -510,7 +548,9 @@ describe("evaluateWriteFailSpike", () => {
 });
 
 describe("evaluateWriteFailSpike — cross-session aggregation", () => {
-  const cfg = resolveAlertingConfig(makeCfg({ rules: { writeFailSpike: { count: 3, windowMinutes: 5 } } }));
+  const cfg = resolveAlertingConfig(
+    makeCfg({ rules: { writeFailSpike: { count: 3, windowMinutes: 5 } } }),
+  );
 
   it("counts write_failed across different sessions for the same agent", () => {
     // 2 events from different sessions (below threshold individually but combined ≥ 3)

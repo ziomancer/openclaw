@@ -12,7 +12,12 @@
  * is the primary trust boundary.
  */
 
-import type { PreFilterResult, SchemaValidationResult, SyntacticFilterResult, ToolOutputSchema } from "./types.js";
+import type {
+  PreFilterResult,
+  SchemaValidationResult,
+  SyntacticFilterResult,
+  ToolOutputSchema,
+} from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Versioned pattern constants (MUST NOT be loaded from config to prevent
@@ -33,7 +38,7 @@ const HOMOGLYPH_MAP: ReadonlyMap<string, string> = new Map([
   ["\u03BF", "o"], // Greek ο (omicron) → o
   ["\u03B1", "a"], // Greek α → a
   ["\u03B5", "e"], // Greek ε → e
-  ["\u0000", ""],  // null byte → strip
+  ["\u0000", ""], // null byte → strip
 ]);
 
 // Injection patterns that map to rule IDs.
@@ -45,10 +50,10 @@ const INJECTION_PATTERNS: ReadonlyArray<[RegExp, string]> = [
   // injection.system-override
   [/new\s+instructions\s*:/i, "injection.system-override"],
   [/system\s+override/i, "injection.system-override"],
-  [/\bSYSTEM\s*:/,          "injection.system-override"],  // all-caps, not case-insensitive
-  [/\[INST\]/i,             "injection.system-override"],
-  [/<\/INST>/i,             "injection.system-override"],
-  [/\byou\s+are\s+now\b/i,  "injection.system-override"],
+  [/\bSYSTEM\s*:/, "injection.system-override"], // all-caps, not case-insensitive
+  [/\[INST\]/i, "injection.system-override"],
+  [/<\/INST>/i, "injection.system-override"],
+  [/\byou\s+are\s+now\b/i, "injection.system-override"],
 ];
 
 // Role-switch trigger phrases (any one present activates the role-switch check).
@@ -72,8 +77,7 @@ const CAPABILITY_GRANTS: ReadonlyArray<RegExp> = [
 // Base64 pattern: string of base64 chars ≥ 30 chars (roughly ≥ 22 raw bytes),
 // tolerating whitespace between chunks. Excludes field names that legitimately
 // hold binary content.
-const BASE64_CONTENT_RE =
-  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const BASE64_CONTENT_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const BASE64_MIN_LEN = 60; // below this length, false-positive rate too high
 const KNOWN_BINARY_FIELD_NAMES = new Set([
   "data",
@@ -216,6 +220,8 @@ export type SyntacticConfig = {
   enabled: boolean;
   maxPayloadBytes: number;
   maxJsonDepth: number;
+  /** Rule IDs demoted to flags-only by the active context profile. These rules still fire and appear in flags/ruleIds, but do not set pass: false. hardBlockRules in the twoPass config take precedence over this. */
+  suppressRules?: string[];
 };
 
 /**
@@ -228,20 +234,22 @@ export type SyntacticConfig = {
  * A PASS here does not mean the content is safe — the semantic sub-agent
  * is the primary trust boundary for novel and obfuscated attacks.
  */
-export function syntacticPreFilter(
-  input: unknown,
-  config: SyntacticConfig,
-): SyntacticFilterResult {
+export function syntacticPreFilter(input: unknown, config: SyntacticConfig): SyntacticFilterResult {
   if (!config.enabled) {
     return { pass: true, flags: [], ruleIds: [] };
   }
 
   const flags: string[] = [];
   const ruleIds: string[] = [];
+  const suppressSet = new Set(config.suppressRules ?? []);
+  let blockingFlagCount = 0;
 
   function addFlag(ruleId: string, description: string): void {
     if (!ruleIds.includes(ruleId)) ruleIds.push(ruleId);
     flags.push(description);
+    if (!suppressSet.has(ruleId)) {
+      blockingFlagCount++;
+    }
   }
 
   // --- Size check (operates on raw bytes before any string extraction) ---
@@ -267,7 +275,10 @@ export function syntacticPreFilter(
   }
 
   // --- Collect string leaves for pattern matching ---
-  const leaves = typeof input === "string" ? [{ value: input, fieldName: undefined } as StringLeaf] : collectStringLeaves(input);
+  const leaves =
+    typeof input === "string"
+      ? [{ value: input, fieldName: undefined } as StringLeaf]
+      : collectStringLeaves(input);
 
   for (const leaf of leaves) {
     const { value: original, fieldName } = leaf;
@@ -322,7 +333,7 @@ export function syntacticPreFilter(
   }
 
   return {
-    pass: flags.length === 0,
+    pass: blockingFlagCount === 0,
     flags,
     ruleIds,
   };
@@ -365,13 +376,17 @@ function validateIso8601(value: unknown, fieldName: string): string | null {
   return null;
 }
 
-function validateTranscript(input: unknown): SchemaValidationResult {
+function validateTranscript(input: unknown, lenientExtraFields = false): SchemaValidationResult {
   const violations: string[] = [];
   const ruleIds: string[] = [];
+  let blocking = false;
 
-  function addViolation(ruleId: string, description: string): void {
+  function addViolation(ruleId: string, description: string, isExtraField = false): void {
     if (!ruleIds.includes(ruleId)) ruleIds.push(ruleId);
     violations.push(description);
+    if (!isExtraField || !lenientExtraFields) {
+      blocking = true;
+    }
   }
 
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
@@ -381,10 +396,10 @@ function validateTranscript(input: unknown): SchemaValidationResult {
 
   const entry = input as Record<string, unknown>;
 
-  // Strict field allowlist — reject any unexpected top-level field
+  // Field allowlist — in strict mode extra fields fail; in lenient mode they flag only
   for (const key of Object.keys(entry)) {
     if (!TRANSCRIPT_ALLOWED_FIELDS.has(key)) {
-      addViolation("schema.extra-field", `unexpected field: ${key}`);
+      addViolation("schema.extra-field", `unexpected field: ${key}`, true);
     }
   }
 
@@ -425,34 +440,51 @@ function validateTranscript(input: unknown): SchemaValidationResult {
     }
   }
 
-  return { pass: violations.length === 0, violations, ruleIds };
+  return { pass: !blocking, violations, ruleIds };
 }
 
-function validateMcpResult(input: unknown, toolSchema?: ToolOutputSchema): SchemaValidationResult {
+function validateMcpResult(
+  input: unknown,
+  toolSchema?: ToolOutputSchema,
+  lenientExtraFields = false,
+  rejectUndeclaredSchema = false,
+): SchemaValidationResult {
   const violations: string[] = [];
   const ruleIds: string[] = [];
+  let blocking = false;
 
-  function addViolation(ruleId: string, description: string): void {
+  function addViolation(ruleId: string, description: string, isExtraField = false): void {
     if (!ruleIds.includes(ruleId)) ruleIds.push(ruleId);
     violations.push(description);
+    if (!isExtraField || !lenientExtraFields) {
+      blocking = true;
+    }
   }
 
-  // No schema declared: accept JSON object or array only, reject primitives
+  // No schema declared
   if (!toolSchema) {
+    if (rejectUndeclaredSchema) {
+      // Admin profile: tools without declared schemas are always rejected
+      addViolation(
+        "schema.missing-field",
+        "MCP result rejected: tool has no declared output schema (admin profile requires declared schemas)",
+      );
+      return { pass: false, violations, ruleIds };
+    }
+    // Default: accept JSON object or array only, reject primitives
     if (input === null || (typeof input !== "object" && !Array.isArray(input))) {
       addViolation(
         "schema.type-mismatch",
         "MCP result with no declared schema must be a JSON object or array",
       );
     }
-    // Bare string or number counts as undeclared-schema violation
     if (typeof input === "string" || typeof input === "number" || typeof input === "boolean") {
       addViolation(
         "schema.type-mismatch",
         "MCP result with no declared schema must not be a bare primitive",
       );
     }
-    return { pass: violations.length === 0, violations, ruleIds };
+    return { pass: !blocking, violations, ruleIds };
   }
 
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
@@ -466,7 +498,10 @@ function validateMcpResult(input: unknown, toolSchema?: ToolOutputSchema): Schem
   if (toolSchema.discriminant && toolSchema.variants) {
     const discriminantValue = result[toolSchema.discriminant];
     if (discriminantValue === undefined) {
-      addViolation("schema.missing-field", `discriminant field '${toolSchema.discriminant}' is missing`);
+      addViolation(
+        "schema.missing-field",
+        `discriminant field '${toolSchema.discriminant}' is missing`,
+      );
       return { pass: false, violations, ruleIds };
     }
     const variantKey = String(discriminantValue);
@@ -482,14 +517,21 @@ function validateMcpResult(input: unknown, toolSchema?: ToolOutputSchema): Schem
     const variantFields = new Set(Object.keys(variant));
     for (const key of Object.keys(result)) {
       if (!variantFields.has(key)) {
-        addViolation("schema.extra-field", `unexpected field '${key}' for variant '${variantKey}'`);
+        addViolation(
+          "schema.extra-field",
+          `unexpected field '${key}' for variant '${variantKey}'`,
+          true,
+        );
       }
     }
     for (const [field, expectedType] of Object.entries(variant)) {
       const actual = result[field];
       if (actual === undefined) {
         // const-typed discriminant fields are required
-        addViolation("schema.missing-field", `required field '${field}' missing from variant '${variantKey}'`);
+        addViolation(
+          "schema.missing-field",
+          `required field '${field}' missing from variant '${variantKey}'`,
+        );
         continue;
       }
       if (expectedType !== "any" && !matchesTypeString(actual, expectedType)) {
@@ -499,7 +541,7 @@ function validateMcpResult(input: unknown, toolSchema?: ToolOutputSchema): Schem
         );
       }
     }
-    return { pass: violations.length === 0, violations, ruleIds };
+    return { pass: !blocking, violations, ruleIds };
   }
 
   // Single-schema (non-union) validation
@@ -507,7 +549,7 @@ function validateMcpResult(input: unknown, toolSchema?: ToolOutputSchema): Schem
     const allowedFields = new Set(Object.keys(toolSchema.fields));
     for (const key of Object.keys(result)) {
       if (!allowedFields.has(key)) {
-        addViolation("schema.extra-field", `unexpected field '${key}'`);
+        addViolation("schema.extra-field", `unexpected field '${key}'`, true);
       }
     }
     for (const [field, expectedType] of Object.entries(toolSchema.fields)) {
@@ -525,7 +567,7 @@ function validateMcpResult(input: unknown, toolSchema?: ToolOutputSchema): Schem
     }
   }
 
-  return { pass: violations.length === 0, violations, ruleIds };
+  return { pass: !blocking, violations, ruleIds };
 }
 
 /**
@@ -564,11 +606,13 @@ export function schemaValidation(
   input: unknown,
   source: "transcript" | "mcp",
   toolSchema?: ToolOutputSchema,
+  lenientExtraFields = false,
+  rejectUndeclaredSchema = false,
 ): SchemaValidationResult {
   if (source === "transcript") {
-    return validateTranscript(input);
+    return validateTranscript(input, lenientExtraFields);
   }
-  return validateMcpResult(input, toolSchema);
+  return validateMcpResult(input, toolSchema, lenientExtraFields, rejectUndeclaredSchema);
 }
 
 // ---------------------------------------------------------------------------
@@ -580,6 +624,16 @@ export type PreFilterParams = {
   source: "transcript" | "mcp";
   syntacticConfig: SyntacticConfig;
   toolSchema?: ToolOutputSchema;
+  /**
+   * Schema strictness from the active context profile.
+   * When "lenient" (or per-source lenient), extra-field violations flag but do not fail.
+   */
+  schemaStrictness?:
+    | "strict"
+    | "lenient"
+    | { transcript: "strict" | "lenient"; mcp: "strict" | "lenient" };
+  /** When true, MCP results from tools with no declared schema are rejected (admin profile). */
+  rejectUndeclaredToolSchemas?: boolean;
 };
 
 /**
@@ -589,9 +643,24 @@ export type PreFilterParams = {
  * The merged result's `pass` field is true only when both stages pass.
  */
 export async function runPreFilter(params: PreFilterParams): Promise<PreFilterResult> {
+  const ss = params.schemaStrictness;
+  const lenientTranscript =
+    ss === "lenient" || (typeof ss === "object" && ss !== null && ss.transcript === "lenient");
+  const lenientMcp =
+    ss === "lenient" || (typeof ss === "object" && ss !== null && ss.mcp === "lenient");
+  const lenientExtraFields = params.source === "transcript" ? lenientTranscript : lenientMcp;
+
   const [syntactic, schema] = await Promise.all([
     Promise.resolve(syntacticPreFilter(params.input, params.syntacticConfig)),
-    Promise.resolve(schemaValidation(params.input, params.source, params.toolSchema)),
+    Promise.resolve(
+      schemaValidation(
+        params.input,
+        params.source,
+        params.toolSchema,
+        lenientExtraFields,
+        params.rejectUndeclaredToolSchemas ?? false,
+      ),
+    ),
   ]);
 
   const allRuleIds = [...new Set([...syntactic.ruleIds, ...schema.ruleIds])];

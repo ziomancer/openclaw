@@ -48,6 +48,8 @@ import { runPreFilter } from "./validation.js";
 const log = createSubsystemLogger("memory/session-sanitization");
 const warnedUnavailableAgents = new Set<string>();
 const warnedSandboxSkipPassthrough = new Set<string>();
+/** Tracks which agentId:sessionId pairs have had context_profile_loaded emitted. */
+const profileLoadedSessions = new Set<string>();
 
 // ---------------------------------------------------------------------------
 // Audit verbosity gating
@@ -640,14 +642,44 @@ export async function writeTranscriptTurnToSessionMemory(params: {
 
   // --- Stage 1: Parallel pre-filter (syntactic + schema) ---
   const validationCfg = resolveSessionSanitizationValidationConfig(params.cfg);
+  const auditVerbosity = validationCfg.audit.verbosity;
+  const auditEnabled = validationCfg.audit.enabled;
+
+  // Emit context_profile_loaded once per session (minimal tier — always emitted when audit enabled)
+  const profileSessionKey = `${params.agentId}:${params.sessionId}`;
+  if (!profileLoadedSessions.has(profileSessionKey)) {
+    profileLoadedSessions.add(profileSessionKey);
+    await gatedAudit(
+      {
+        agentId: params.agentId,
+        sessionId: params.sessionId,
+        entry: {
+          event: "context_profile_loaded",
+          timestamp: nowIso(now),
+          contextProfile: validationCfg.context.profileId,
+          isCustom: validationCfg.context.isCustom,
+          baseProfile: validationCfg.context.isCustom
+            ? validationCfg.context.baseProfile
+            : undefined,
+          schemaStrictness: validationCfg.context.schemaStrictness,
+          auditVerbosityFloor: validationCfg.context.auditVerbosityFloor,
+          frequencyOverridesApplied: validationCfg.context.frequencyOverridesApplied,
+          syntacticSuppressedRules: validationCfg.context.syntacticSuppressRules,
+          syntacticAddedRules: validationCfg.context.syntacticAddRules,
+        },
+      },
+      "minimal",
+      undefined,
+      auditEnabled,
+    );
+  }
+
   const preFilter = await runPreFilter({
     input: rawEntry,
     source: "transcript",
     syntacticConfig: validationCfg.syntactic,
+    schemaStrictness: validationCfg.context.schemaStrictness,
   });
-
-  const auditVerbosity = validationCfg.audit.verbosity;
-  const auditEnabled = validationCfg.audit.enabled;
 
   // Emit syntactic audit events
   if (validationCfg.syntactic.enabled) {
@@ -865,6 +897,7 @@ export async function writeTranscriptTurnToSessionMemory(params: {
       mode: "write",
       lane: params.helperDeps?.lane,
       runner: params.helperDeps?.runner,
+      promptSuffix: validationCfg.context.promptSuffix || undefined,
       files: [
         {
           relativePath: "mode.json",
@@ -1029,6 +1062,7 @@ export async function recallSessionMemory(params: {
     mode: "recall",
     lane: params.helperDeps?.lane,
     runner: params.helperDeps?.runner,
+    promptSuffix: recallValidationCfg.context.promptSuffix || undefined,
     files: [
       {
         relativePath: "mode.json",
@@ -1134,6 +1168,7 @@ export async function signalSessionMemory(params: {
       mode: "signal",
       lane: params.helperDeps?.lane,
       runner: params.helperDeps?.runner,
+      promptSuffix: signalValidationCfg.context.promptSuffix || undefined,
       files: [
         {
           relativePath: "mode.json",
@@ -1387,6 +1422,8 @@ export async function processMcpToolResult(params: {
     input: params.rawResult,
     source: "mcp",
     syntacticConfig: validationCfg.syntactic,
+    schemaStrictness: validationCfg.context.schemaStrictness,
+    rejectUndeclaredToolSchemas: validationCfg.context.rejectUndeclaredToolSchemas,
   });
 
   // Emit syntactic audit events
@@ -1719,6 +1756,7 @@ export async function processMcpToolResult(params: {
       mode: "mcp",
       lane: params.helperDeps?.lane ?? "background:session-memory-mcp",
       runner: params.helperDeps?.runner,
+      promptSuffix: validationCfg.context.promptSuffix || undefined,
       files: workspaceFiles,
     });
   } catch (error) {

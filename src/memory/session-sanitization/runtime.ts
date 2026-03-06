@@ -189,6 +189,8 @@ export async function runSessionSanitizationHelper<T>(params: {
   timeoutMs?: number;
   lane?: string;
   runner?: SanitizationRunner;
+  /** Static prompt suffix from the active context profile. Appended once at call time. */
+  promptSuffix?: string;
 }): Promise<T> {
   const availability = resolveSessionSanitizationAvailability({
     cfg: params.cfg,
@@ -240,7 +242,9 @@ export async function runSessionSanitizationHelper<T>(params: {
       disableMessageTool: true,
       suppressToolErrorWarnings: true,
       toolPolicyOverride: { allow: ["read"] },
-      systemPromptOverride: SANITIZATION_SYSTEM_PROMPT,
+      systemPromptOverride: params.promptSuffix
+        ? `${SANITIZATION_SYSTEM_PROMPT}\n\n${params.promptSuffix}`
+        : SANITIZATION_SYSTEM_PROMPT,
     });
     const text = extractPayloadText(result.payloads);
     return parseHelperResponse<T>(params.mode, text);
