@@ -99,13 +99,13 @@ export function isMcpServerTrusted(params: {
 export const UNKNOWN_MCP_SERVER = "unknown";
 
 /**
- * Returns true only when the tool's exact name is declared in at least one
- * server's `tools` list in `cfg.mcpServers`.  Prefix entries do not satisfy
- * this predicate — only verbatim tool-name declarations count.
+ * Returns true when the tool name is claimed by at least one server in
+ * `cfg.mcpServers`, either by exact name match or by prefix match (i.e. the
+ * tool name starts with a declared prefix entry).
  *
- * Used as the MCP membership gate in `wrapMcpToolDefinitions` so that native
- * tools whose names share a prefix with a configured server entry are never
- * misclassified as MCP and routed through `processMcpToolResult`.
+ * Uses the same matching logic as `resolveToolServer` so the two functions
+ * stay consistent.  Used as the MCP membership gate in `wrapMcpToolDefinitions`
+ * to distinguish confirmed MCP tools from native OpenClaw / client tools.
  */
 export function isMcpToolNameDeclared(cfg: OpenClawConfig | undefined, toolName: string): boolean {
   const registry = cfg?.mcpServers;
@@ -113,7 +113,7 @@ export function isMcpToolNameDeclared(cfg: OpenClawConfig | undefined, toolName:
   for (const entry of Object.values(registry)) {
     if (
       Array.isArray(entry?.tools) &&
-      entry.tools.some((t) => typeof t === "string" && t === toolName)
+      entry.tools.some((t) => typeof t === "string" && (t === toolName || toolName.startsWith(t)))
     ) {
       return true;
     }
