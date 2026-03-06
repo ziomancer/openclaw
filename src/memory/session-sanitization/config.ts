@@ -114,7 +114,7 @@ export function resolveToolServer(cfg: OpenClawConfig | undefined, toolName: str
   for (const [serverName, entry] of Object.entries(registry)) {
     if (
       Array.isArray(entry?.tools) &&
-      entry.tools.some((t) => typeof t === "string" && t === toolName)
+      entry.tools.some((t) => typeof t === "string" && (t === toolName || toolName.startsWith(t)))
     ) {
       return serverName;
     }

@@ -236,7 +236,6 @@ function formatAutomaticRecallPrompt(result: SessionMemoryRecallResult): string 
         : "This transcript-derived recall is current-session only and low-confidence. If you use it, qualify it explicitly and avoid presenting it as certain.";
   return [
     "## Transcript Session Recall",
-    `Query: ${result.query}`,
     `Source: ${result.source}`,
     `Confidence: ${result.confidence}`,
     confidenceNote,
