@@ -103,16 +103,6 @@ function measureNestingDepth(obj: unknown, depth = 0): number {
   return depth;
 }
 
-function countTotalFields(obj: unknown): number {
-  if (!obj || typeof obj !== "object") {
-    return 0;
-  }
-  if (Array.isArray(obj)) {
-    return obj.reduce((sum: number, item: unknown) => sum + countTotalFields(item), 0);
-  }
-  const entries = Object.entries(obj as Record<string, unknown>);
-  return entries.reduce((sum, [, v]) => sum + 1 + countTotalFields(v), 0);
-}
 
 function allDataFieldsEmpty(obj: unknown): boolean {
   if (obj === null || obj === undefined) {
