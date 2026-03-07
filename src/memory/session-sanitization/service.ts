@@ -80,7 +80,7 @@ const EVENT_MIN_VERBOSITY: Readonly<Record<string, AuditVerbosity>> = {
   twopass_hard_block: "minimal",
   frequency_escalation_tier1: "minimal",
   frequency_escalation_tier2: "minimal",
-  audit_config_loaded: "minimal",
+  context_profile_loaded: "minimal",
   // standard — normal decision events + pass events
   trusted_pass: "standard",
   sanitized_pass: "standard",
@@ -1310,6 +1310,16 @@ export async function cleanupSessionSanitizationArtifacts(params: {
   // Also reset in-memory frequency state so cleanup is complete.
   if (params.sessionId) {
     sessionFrequencyState.delete(params.sessionId);
+    profileLoadedSessions.delete(`${params.agentId}:${params.sessionId}`);
+    return;
+  }
+
+  // Full agent cleanup: clear all profile-loaded markers for this agent.
+  const prefix = `${params.agentId}:`;
+  for (const key of profileLoadedSessions) {
+    if (key.startsWith(prefix)) {
+      profileLoadedSessions.delete(key);
+    }
   }
 }
 
@@ -1320,6 +1330,11 @@ export async function cleanupSessionSanitizationArtifacts(params: {
  */
 export function resetSessionFrequencyState(sessionId: string): void {
   sessionFrequencyState.delete(sessionId);
+  for (const key of profileLoadedSessions) {
+    if (key.endsWith(`:${sessionId}`)) {
+      profileLoadedSessions.delete(key);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -698,6 +698,68 @@ describe("webhook delivery", () => {
     // Initial attempt + 2 retries = 3 calls
     expect(fetch).toHaveBeenCalledTimes(3);
   });
+
+  it("refreshes timestamp/signature on each retry attempt", async () => {
+    const { deliverWebhook } = await import("./webhook.js");
+    const secret = "retry-secret";
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({ ok: false } as Response)
+      .mockResolvedValueOnce({ ok: true } as Response);
+
+    const cfg = resolveAlertingConfig({
+      alerting: {
+        channels: {
+          webhook: {
+            url: "https://example.com/alert",
+            secret,
+            retries: 1,
+            retryDelayMs: 10,
+          },
+        },
+      },
+    });
+
+    await deliverWebhook(
+      {
+        alertId: "a4",
+        ruleId: "writeFailSpike",
+        severity: "medium",
+        agentId: AGENT_ID,
+        sessionId: SESSION_ID,
+        timestamp: new Date().toISOString(),
+        summary: "test",
+        details: { triggeringEvents: [], recentContext: [] },
+        metadata: { ruleConfig: {} },
+      },
+      cfg,
+    );
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const [, init1] = vi.mocked(fetch).mock.calls[0]!;
+    const [, init2] = vi.mocked(fetch).mock.calls[1]!;
+    const headers1 = (init1 as RequestInit).headers as Record<string, string>;
+    const headers2 = (init2 as RequestInit).headers as Record<string, string>;
+    const ts1 = headers1["X-OpenClaw-Timestamp"];
+    const ts2 = headers2["X-OpenClaw-Timestamp"];
+    const sig1 = headers1["X-OpenClaw-Signature"];
+    const sig2 = headers2["X-OpenClaw-Signature"];
+    expect(ts1).toBeDefined();
+    expect(ts2).toBeDefined();
+    expect(sig1).toMatch(/^sha256=/);
+    expect(sig2).toMatch(/^sha256=/);
+    expect(ts1).not.toBe(ts2);
+    expect(sig1).not.toBe(sig2);
+
+    const body1 = (init1 as RequestInit).body as string;
+    const body2 = (init2 as RequestInit).body as string;
+    expect(body1).toBe(body2);
+    expect(sig1).toBe(
+      `sha256=${crypto.createHmac("sha256", secret).update(`${ts1}.${body1}`).digest("hex")}`,
+    );
+    expect(sig2).toBe(
+      `sha256=${crypto.createHmac("sha256", secret).update(`${ts2}.${body2}`).digest("hex")}`,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

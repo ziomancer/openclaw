@@ -8,6 +8,7 @@ import {
   buildAutomaticSessionMemoryPrompt,
   cleanupSessionSanitizationArtifacts,
   recallSessionMemory,
+  resetSessionFrequencyState,
   signalSessionMemory,
   writeTranscriptTurnToSessionMemory,
 } from "./service.js";
@@ -491,6 +492,98 @@ describe("session sanitization service", () => {
     }
 
     expect(staleRemoved).toBe(true);
+  });
+
+  it("re-emits context_profile_loaded after resetSessionFrequencyState", async () => {
+    const profileSessionId = "sess-profile-reset";
+    const runner = vi.fn().mockResolvedValue(
+      createRunnerResult({
+        mode: "write",
+        decisions: ["remember this"],
+        actionItems: [],
+        entities: [],
+        contextNote: "ok",
+        discard: false,
+      }),
+    );
+
+    await writeTranscriptTurnToSessionMemory({
+      cfg: createConfig(),
+      agentId: AGENT_ID,
+      sessionId: profileSessionId,
+      canonical: createCanonicalContext({ messageId: "msg-profile-1" }),
+      helperDeps: { runner },
+    });
+    await writeTranscriptTurnToSessionMemory({
+      cfg: createConfig(),
+      agentId: AGENT_ID,
+      sessionId: profileSessionId,
+      canonical: createCanonicalContext({ messageId: "msg-profile-2" }),
+      helperDeps: { runner },
+    });
+
+    const beforeReset = await readSessionMemoryAuditEntries({
+      agentId: AGENT_ID,
+      sessionId: profileSessionId,
+    });
+    expect(beforeReset.filter((entry) => entry.event === "context_profile_loaded")).toHaveLength(1);
+
+    resetSessionFrequencyState(profileSessionId);
+
+    await writeTranscriptTurnToSessionMemory({
+      cfg: createConfig(),
+      agentId: AGENT_ID,
+      sessionId: profileSessionId,
+      canonical: createCanonicalContext({ messageId: "msg-profile-3" }),
+      helperDeps: { runner },
+    });
+
+    const afterReset = await readSessionMemoryAuditEntries({
+      agentId: AGENT_ID,
+      sessionId: profileSessionId,
+    });
+    expect(afterReset.filter((entry) => entry.event === "context_profile_loaded")).toHaveLength(2);
+  });
+
+  it("re-emits context_profile_loaded after cleanupSessionSanitizationArtifacts", async () => {
+    const profileSessionId = "sess-profile-cleanup";
+    const runner = vi.fn().mockResolvedValue(
+      createRunnerResult({
+        mode: "write",
+        decisions: ["remember this"],
+        actionItems: [],
+        entities: [],
+        contextNote: "ok",
+        discard: false,
+      }),
+    );
+
+    await writeTranscriptTurnToSessionMemory({
+      cfg: createConfig(),
+      agentId: AGENT_ID,
+      sessionId: profileSessionId,
+      canonical: createCanonicalContext({ messageId: "msg-clean-profile-1" }),
+      helperDeps: { runner },
+    });
+
+    await cleanupSessionSanitizationArtifacts({
+      agentId: AGENT_ID,
+      sessionId: profileSessionId,
+    });
+
+    await writeTranscriptTurnToSessionMemory({
+      cfg: createConfig(),
+      agentId: AGENT_ID,
+      sessionId: profileSessionId,
+      canonical: createCanonicalContext({ messageId: "msg-clean-profile-2" }),
+      helperDeps: { runner },
+    });
+
+    const audits = await readSessionMemoryAuditEntries({
+      agentId: AGENT_ID,
+      sessionId: profileSessionId,
+    });
+    expect(audits.filter((entry) => entry.event === "context_profile_loaded")).toHaveLength(1);
   });
 
   it("returns high confidence only for raw-backed recall", async () => {

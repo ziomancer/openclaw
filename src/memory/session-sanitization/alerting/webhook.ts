@@ -58,8 +58,6 @@ export async function deliverWebhook(
   if (!url) return;
 
   const body = JSON.stringify(payload);
-  const timestamp = new Date().toISOString();
-  const signature = secret ? sign(body, secret, timestamp) : "sha256=unsigned";
 
   if (!secret) {
     log.warn("alerting webhook: no secret configured — payload will not be signed", {
@@ -69,6 +67,9 @@ export async function deliverWebhook(
 
   let attempt = 0;
   while (attempt <= retries) {
+    // Refresh timestamp/signature on each attempt so replay-window checks stay valid.
+    const timestamp = new Date().toISOString();
+    const signature = secret ? sign(body, secret, timestamp) : "sha256=unsigned";
     const ok = await tryDeliver(url, body, signature, timestamp, payload.severity, timeoutMs);
     if (ok) return;
     attempt++;

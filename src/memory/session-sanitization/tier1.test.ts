@@ -556,6 +556,14 @@ describe("tier1 — STRUCT structural topology", () => {
     const r = run({ a: 1, b: 2, c: 3 });
     expect(r.patternsMatched).not.toContain("STRUCT-004");
   });
+
+  it("STRUCT-004: does not match key-like text inside JSON string values", () => {
+    const r = run({
+      message: 'field "status": success',
+      status: "ok",
+    });
+    expect(r.patternsMatched).not.toContain("STRUCT-004");
+  });
 });
 
 // ---------------------------------------------------------------------------
