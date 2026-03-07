@@ -103,7 +103,6 @@ function measureNestingDepth(obj: unknown, depth = 0): number {
   return depth;
 }
 
-
 function allDataFieldsEmpty(obj: unknown): boolean {
   if (obj === null || obj === undefined) {
     return true;
@@ -445,12 +444,10 @@ function checkStructuralTopology(rawResult: unknown, acc: CheckAccumulator): voi
     );
   }
 
-  // STRUCT-002: field count at top level only
+  // STRUCT-002: field count at top level only (arrays have no named fields)
   const fieldCount =
-    rawResult !== null && typeof rawResult === "object"
-      ? Array.isArray(rawResult)
-        ? rawResult.length
-        : Object.keys(rawResult).length
+    rawResult !== null && typeof rawResult === "object" && !Array.isArray(rawResult)
+      ? Object.keys(rawResult).length
       : 0;
   if (fieldCount > STRUCT002_MAX_FIELDS) {
     addBlock(
