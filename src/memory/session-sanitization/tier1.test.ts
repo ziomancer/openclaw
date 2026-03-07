@@ -357,6 +357,12 @@ describe("tier1 — MAL malformation detection", () => {
     const r = run(["item1", "item2"]);
     expect(r.patternsMatched).not.toContain("MAL-004");
   });
+
+  it("MAL-004: does not fire on empty object (zero-key success response)", () => {
+    const r = run({});
+    expect(r.patternsMatched).not.toContain("MAL-004");
+    expect(r.blocked).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

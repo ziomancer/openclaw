@@ -112,7 +112,9 @@ function allDataFieldsEmpty(obj: unknown): boolean {
     return obj.length === 0;
   }
   if (typeof obj === "object") {
-    return Object.values(obj as Record<string, unknown>).every(
+    const values = Object.values(obj as Record<string, unknown>);
+    if (values.length === 0) return false;
+    return values.every(
       (v) =>
         v === null ||
         v === undefined ||
