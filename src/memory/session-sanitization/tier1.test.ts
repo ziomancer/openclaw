@@ -619,4 +619,16 @@ describe("tier1 — result shape", () => {
     });
     expect(r.patternsMatched.filter((id) => id.startsWith("INJ-")).length).toBeGreaterThan(1);
   });
+
+  it("cyclic object does not cause collectStringValues to throw", () => {
+    const obj: Record<string, unknown> = { value: "safe text" };
+    obj["self"] = obj;
+    expect(() => run(obj)).not.toThrow();
+  });
+
+  it("cyclic object does not cause collectFieldNames to throw", () => {
+    const obj: Record<string, unknown> = { key: "value" };
+    obj["self"] = obj;
+    expect(() => run(obj)).not.toThrow();
+  });
 });

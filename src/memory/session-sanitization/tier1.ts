@@ -60,30 +60,46 @@ function addAnnotation(acc: CheckAccumulator, patternId: string, description: st
 // Helpers — object traversal
 // ---------------------------------------------------------------------------
 
-function collectStringValues(obj: unknown, out: string[] = []): string[] {
+function collectStringValues(
+  obj: unknown,
+  out: string[] = [],
+  visited = new WeakSet<object>(),
+): string[] {
   if (typeof obj === "string") {
     out.push(obj);
   } else if (Array.isArray(obj)) {
+    if (visited.has(obj)) return out;
+    visited.add(obj);
     for (const item of obj) {
-      collectStringValues(item, out);
+      collectStringValues(item, out, visited);
     }
   } else if (obj !== null && typeof obj === "object") {
+    if (visited.has(obj)) return out;
+    visited.add(obj);
     for (const v of Object.values(obj)) {
-      collectStringValues(v, out);
+      collectStringValues(v, out, visited);
     }
   }
   return out;
 }
 
-function collectFieldNames(obj: unknown, out: string[] = []): string[] {
+function collectFieldNames(
+  obj: unknown,
+  out: string[] = [],
+  visited = new WeakSet<object>(),
+): string[] {
   if (Array.isArray(obj)) {
+    if (visited.has(obj)) return out;
+    visited.add(obj);
     for (const item of obj) {
-      collectFieldNames(item, out);
+      collectFieldNames(item, out, visited);
     }
   } else if (obj !== null && typeof obj === "object") {
+    if (visited.has(obj)) return out;
+    visited.add(obj);
     for (const key of Object.keys(obj)) {
       out.push(key);
-      collectFieldNames((obj as Record<string, unknown>)[key], out);
+      collectFieldNames((obj as Record<string, unknown>)[key], out, visited);
     }
   }
   return out;
