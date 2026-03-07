@@ -483,6 +483,10 @@ function computeSummaryDensity(entry: SessionMemorySummaryEntry): number {
   );
 }
 
+function isTranscriptSummaryEntry(entry: SessionMemorySummaryEntry): boolean {
+  return entry.source === "transcript";
+}
+
 function normalizeRecallConfidence(params: {
   child: SessionMemoryRecallChildResult;
   summariesById: Map<string, SessionMemorySummaryEntry>;
@@ -879,10 +883,12 @@ export async function writeTranscriptTurnToSessionMemory(params: {
     entry: rawEntry,
   });
 
-  const summaryEntries = await readSessionMemorySummaryEntries({
-    agentId: params.agentId,
-    sessionId: params.sessionId,
-  });
+  const summaryEntries = (
+    await readSessionMemorySummaryEntries({
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+    })
+  ).filter(isTranscriptSummaryEntry);
 
   // Build enhanced context for tier2 enhanced scrutiny
   const tier2ScrutinyNote =
@@ -953,6 +959,7 @@ export async function writeTranscriptTurnToSessionMemory(params: {
       messageId: rawEntry.messageId,
       timestamp: rawEntry.timestamp,
       rawExpiresAt: rawEntry.expiresAt,
+      source: "transcript",
       decisions: child.decisions,
       actionItems: child.actionItems,
       entities: child.entities,
@@ -1030,10 +1037,12 @@ export async function recallSessionMemory(params: {
     auditEnabled: recallValidationCfg.audit.enabled,
   });
 
-  const summaries = await readSessionMemorySummaryEntries({
-    agentId: params.agentId,
-    sessionId: params.sessionId,
-  });
+  const summaries = (
+    await readSessionMemorySummaryEntries({
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+    })
+  ).filter(isTranscriptSummaryEntry);
   const matchedSummaries = sortByLexicalMatch(query, summaries);
   if (matchedSummaries.length === 0) {
     return {
@@ -1143,10 +1152,12 @@ export async function signalSessionMemory(params: {
 
   const summaries = sortByLexicalMatch(
     query,
-    await readSessionMemorySummaryEntries({
-      agentId: params.agentId,
-      sessionId: params.sessionId,
-    }),
+    (
+      await readSessionMemorySummaryEntries({
+        agentId: params.agentId,
+        sessionId: params.sessionId,
+      })
+    ).filter(isTranscriptSummaryEntry),
   ).slice(0, limit);
   if (summaries.length === 0) {
     return { mode: "signal", relevant: [] };
@@ -1859,6 +1870,7 @@ export async function processMcpToolResult(params: {
     messageId: params.toolCallId,
     timestamp: nowIso(now),
     rawExpiresAt: nowIso(now + sanitizationCfg.rawMaxAgeMs),
+    source: "mcp",
     decisions: [],
     actionItems: [],
     entities: [],

@@ -4,7 +4,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import { processMcpToolResult, resetSessionFrequencyState } from "./service.js";
-import { readSessionMemoryAuditEntries, readSessionMemoryMcpRawEntries } from "./storage.js";
+import {
+  readSessionMemoryAuditEntries,
+  readSessionMemoryMcpRawEntries,
+  readSessionMemorySummaryEntries,
+} from "./storage.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -172,8 +176,10 @@ describe("processMcpToolResult", () => {
         agentId: AGENT_ID,
         sessionId: SESSION_ID,
       });
-      expect(audits.some((a) => a.event === "schema_fail")).toBe(true);
-      expect(audits.some((a) => a.event === "trusted_pass")).toBe(true);
+      const schemaFailIdx = audits.findIndex((a) => a.event === "schema_fail");
+      const trustedPassIdx = audits.findIndex((a) => a.event === "trusted_pass");
+      expect(schemaFailIdx).toBeGreaterThanOrEqual(0);
+      expect(trustedPassIdx).toBeGreaterThan(schemaFailIdx);
     });
 
     it("does not write a raw mirror for trusted servers", async () => {
@@ -363,6 +369,14 @@ describe("processMcpToolResult", () => {
       });
       expect(entries).toHaveLength(1);
       expect(entries[0].entry.safe).toBe(true);
+
+      const summaries = await readSessionMemorySummaryEntries({
+        agentId: AGENT_ID,
+        sessionId: SESSION_ID,
+      });
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]?.messageId).toBe("call-001");
+      expect(summaries[0]?.source).toBe("mcp");
 
       const audits = await readSessionMemoryAuditEntries({
         agentId: AGENT_ID,

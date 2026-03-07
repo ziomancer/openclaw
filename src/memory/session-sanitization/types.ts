@@ -30,6 +30,7 @@ export type SessionMemorySummaryEntry = {
   messageId: string;
   timestamp: string;
   rawExpiresAt: string;
+  source: "transcript" | "mcp";
   decisions: string[];
   actionItems: string[];
   entities: string[];
@@ -258,6 +259,7 @@ export const sessionMemorySummaryEntrySchema = z
     messageId: z.string(),
     timestamp: z.string(),
     rawExpiresAt: z.string(),
+    source: z.enum(["transcript", "mcp"]).default("transcript"),
     decisions: stringArraySchema,
     actionItems: stringArraySchema,
     entities: stringArraySchema,

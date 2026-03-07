@@ -809,6 +809,30 @@ describe("notifyAlerting integration", () => {
     expect(body.ruleId).toBe("syntacticFailBurst");
   });
 
+  it("fires trustedToolSchemaFail alert when schema_fail occurs on a trusted server", async () => {
+    const cfg = makeCfg({
+      channels: { webhook: { url: "https://example.com/alert" } },
+    });
+    notifyAlerting({
+      entry: {
+        event: "schema_fail",
+        timestamp: new Date().toISOString(),
+        server: "trusted-server",
+      },
+      agentId: AGENT_ID,
+      sessionId: SESSION_ID,
+      cfg,
+      now: NOW,
+    });
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetch).toHaveBeenCalled();
+    const [, init] = vi.mocked(fetch).mock.calls.at(-1)!;
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.ruleId).toBe("trustedToolSchemaFail");
+    expect(body.severity).toBe("high");
+  });
+
   it("deduplicates: second identical alert within suppression window is not delivered", async () => {
     const cfg = makeCfg({
       channels: { webhook: { url: "https://example.com/alert" } },

@@ -6,6 +6,7 @@ import type { OpenClawConfig } from "../../config/config.js";
 import {
   cleanupSessionSanitizationArtifacts,
   recallSessionMemory,
+  signalSessionMemory,
   writeTranscriptTurnToSessionMemory,
 } from "./service.js";
 import {
@@ -120,6 +121,7 @@ describe("session sanitization service", () => {
     expect(rawEntries[0]?.entry.transcript).toBe("Call mom tomorrow at 9");
     expect(summaries).toHaveLength(1);
     expect(summaries[0]?.messageId).toBe("msg-1");
+    expect(summaries[0]?.source).toBe("transcript");
     expect(summaries[0]?.actionItems).toEqual(["Call mom tomorrow at 9."]);
     expect(audit.find((a) => a.event === "write")).toBeDefined();
   });
@@ -161,6 +163,156 @@ describe("session sanitization service", () => {
     expect(discardEntry?.messageId).toBe("msg-discard");
   });
 
+  it("treats legacy summary entries without source as transcript", async () => {
+    const summaryFile = resolveSessionMemorySummaryFile(AGENT_ID, SESSION_ID);
+    await fs.mkdir(path.dirname(summaryFile), { recursive: true });
+    await fs.writeFile(
+      summaryFile,
+      `${JSON.stringify({
+        messageId: "legacy-msg",
+        timestamp: "2026-03-03T10:00:00.000Z",
+        rawExpiresAt: "2099-03-03T10:00:00.000Z",
+        decisions: ["legacy"],
+        actionItems: [],
+        entities: [],
+        discard: false,
+      })}\n`,
+      "utf8",
+    );
+
+    const summaries = await readSessionMemorySummaryEntries({
+      agentId: AGENT_ID,
+      sessionId: SESSION_ID,
+    });
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.source).toBe("transcript");
+  });
+
+  it("excludes MCP summaries from transcript helper summary-index context", async () => {
+    await appendSessionMemorySummaryEntry({
+      agentId: AGENT_ID,
+      sessionId: SESSION_ID,
+      entry: {
+        messageId: "msg-transcript-context",
+        timestamp: "2026-03-03T10:00:00.000Z",
+        rawExpiresAt: "2099-03-03T10:00:00.000Z",
+        source: "transcript",
+        decisions: ["call mom"],
+        actionItems: [],
+        entities: ["mom"],
+        discard: false,
+      },
+    });
+    await appendSessionMemorySummaryEntry({
+      agentId: AGENT_ID,
+      sessionId: SESSION_ID,
+      entry: {
+        messageId: "mcp-call-1",
+        timestamp: "2026-03-03T10:01:00.000Z",
+        rawExpiresAt: "2099-03-03T10:01:00.000Z",
+        source: "mcp",
+        decisions: [],
+        actionItems: [],
+        entities: [],
+        contextNote: "MCP context note",
+        discard: false,
+      },
+    });
+
+    const runner = vi.fn().mockImplementation(
+      async (params: { workspaceDir: string }) => {
+        const summaryIndexPath = path.join(params.workspaceDir, "summary-index.jsonl");
+        const summaryLines = (await fs.readFile(summaryIndexPath, "utf8"))
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as { messageId: string; source?: string });
+        expect(summaryLines.map((row) => row.messageId)).toEqual(["msg-transcript-context"]);
+        expect(summaryLines.every((row) => row.source === "transcript")).toBe(true);
+
+        return createRunnerResult({
+          mode: "write",
+          decisions: ["new decision"],
+          actionItems: [],
+          entities: [],
+          contextNote: "ok",
+          discard: false,
+        });
+      },
+    );
+
+    await writeTranscriptTurnToSessionMemory({
+      cfg: createConfig(),
+      agentId: AGENT_ID,
+      sessionId: SESSION_ID,
+      canonical: createCanonicalContext({ messageId: "msg-new-transcript" }),
+      helperDeps: { runner },
+    });
+
+    expect(runner).toHaveBeenCalledOnce();
+  });
+
+  it("recall ignores MCP-only lexical matches", async () => {
+    await appendSessionMemorySummaryEntry({
+      agentId: AGENT_ID,
+      sessionId: SESSION_ID,
+      entry: {
+        messageId: "mcp-only",
+        timestamp: "2026-03-03T10:00:00.000Z",
+        rawExpiresAt: "2099-03-03T10:00:00.000Z",
+        source: "mcp",
+        decisions: [],
+        actionItems: [],
+        entities: ["deploy-token"],
+        contextNote: "MCP-only context",
+        discard: false,
+      },
+    });
+
+    const runner = vi.fn();
+    const result = await recallSessionMemory({
+      cfg: createConfig(),
+      agentId: AGENT_ID,
+      sessionId: SESSION_ID,
+      query: "deploy-token",
+      helperDeps: { runner },
+    });
+
+    expect(result.result).toBe("");
+    expect(result.confidence).toBe("low");
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it("signal ignores MCP-only lexical matches", async () => {
+    await appendSessionMemorySummaryEntry({
+      agentId: AGENT_ID,
+      sessionId: SESSION_ID,
+      entry: {
+        messageId: "mcp-only-signal",
+        timestamp: "2026-03-03T10:00:00.000Z",
+        rawExpiresAt: "2099-03-03T10:00:00.000Z",
+        source: "mcp",
+        decisions: [],
+        actionItems: [],
+        entities: ["git-credential"],
+        contextNote: "MCP-only signal",
+        discard: false,
+      },
+    });
+
+    const runner = vi.fn();
+    const result = await signalSessionMemory({
+      cfg: createConfig(),
+      agentId: AGENT_ID,
+      sessionId: SESSION_ID,
+      query: "git-credential",
+      helperDeps: { runner },
+    });
+
+    expect(result.relevant).toEqual([]);
+    expect(runner).not.toHaveBeenCalled();
+  });
+
   it("returns high confidence only for raw-backed recall", async () => {
     await appendSessionMemorySummaryEntry({
       agentId: AGENT_ID,
@@ -169,6 +321,7 @@ describe("session sanitization service", () => {
         messageId: "msg-raw",
         timestamp: "2026-03-03T10:00:00.000Z",
         rawExpiresAt: "2099-03-03T10:00:00.000Z",
+        source: "transcript",
         decisions: ["Call mom tomorrow."],
         actionItems: ["Call mom tomorrow at 9."],
         entities: ["mom"],
@@ -217,6 +370,7 @@ describe("session sanitization service", () => {
         messageId: "msg-medium",
         timestamp: "2026-03-03T10:00:00.000Z",
         rawExpiresAt: "2099-03-03T10:00:00.000Z",
+        source: "transcript",
         decisions: ["Reach out to Alex."],
         actionItems: ["Send Alex the draft."],
         entities: ["Alex"],
@@ -255,6 +409,7 @@ describe("session sanitization service", () => {
         messageId: "msg-sparse",
         timestamp: "2026-03-03T10:00:00.000Z",
         rawExpiresAt: "2099-03-03T10:00:00.000Z",
+        source: "transcript",
         decisions: [],
         actionItems: [],
         entities: ["printer"],
@@ -268,6 +423,7 @@ describe("session sanitization service", () => {
         messageId: "msg-expired",
         timestamp: "2026-03-03T10:00:00.000Z",
         rawExpiresAt: "2020-03-03T10:00:00.000Z",
+        source: "transcript",
         decisions: ["Book dentist appointment."],
         actionItems: ["Book dentist appointment next week."],
         entities: ["dentist"],
@@ -333,6 +489,7 @@ describe("session sanitization service", () => {
         messageId: "msg-cleanup",
         timestamp: "2026-03-03T10:00:00.000Z",
         rawExpiresAt: "2099-03-03T10:00:00.000Z",
+        source: "transcript",
         decisions: ["cleanup"],
         actionItems: [],
         entities: [],
