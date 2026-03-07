@@ -288,8 +288,9 @@ export function syntacticPreFilter(input: unknown, config: SyntacticConfig): Syn
       "structural.oversized-payload",
       `payload size ${rawBytes} bytes exceeds limit ${config.maxPayloadBytes}`,
     );
-    // Short-circuit: no point scanning a massive payload further
-    return { pass: false, flags, ruleIds };
+    // Short-circuit: no point scanning a massive payload further.
+    // Use blockingFlagCount so suppressed rules are honoured correctly.
+    return { pass: blockingFlagCount === 0, flags, ruleIds };
   }
 
   // --- JSON depth check ---

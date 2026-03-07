@@ -5,7 +5,14 @@ function isOpenAiCompletionsModel(model: Model<Api>): model is Model<"openai-com
 }
 
 function isLoopbackHost(host: string): boolean {
-  return host === "127.0.0.1" || host === "localhost" || host === "0.0.0.0" || host === "::1";
+  // "[::1]" is what URL.hostname returns for bracketed IPv6 literals (WHATWG URL spec).
+  return (
+    host === "127.0.0.1" ||
+    host === "localhost" ||
+    host === "0.0.0.0" ||
+    host === "::1" ||
+    host === "[::1]"
+  );
 }
 
 function isLmStudioEndpoint(provider: string, baseUrl: string): boolean {
