@@ -29,10 +29,12 @@ implementation. Operators may extend with custom patterns via config.
   about intent, scope, or context is a Tier 2 concern.
 - **Case-insensitive matching unless noted.** Injection attempts use varied
   casing. All string pattern matches are case-insensitive by default.
-- **Patterns operate on the serialized MCP result.** The input is the raw
-  JSON string of the tool result. Patterns match against field values, not
-  field names (field names are controlled by the server schema, not by
-  attackers in most cases).
+- **Patterns operate on the serialized MCP result and parsed structure.**
+  Injection patterns (INJ-*) and credential patterns (CRED-*) match against
+  field values extracted from the result. STRUCT-003 additionally applies
+  injection patterns against field names — a small but real attack surface.
+  All other structural checks (STRUCT-001, STRUCT-002, STRUCT-004) operate
+  on the parsed JSON object directly.
 
 ---
 
@@ -589,6 +591,11 @@ future-proofing.
 ---
 
 ## Extension Points
+
+> **Not yet implemented.** The `customPatterns` config extension described
+> below is a planned capability — there is no corresponding config key or
+> implementation path in the current codebase. The schema is documented here
+> as a design target for a future iteration.
 
 Operators may add custom patterns via config under
 `memory.sessions.sanitization.mcp.tier1.customPatterns`. Custom patterns

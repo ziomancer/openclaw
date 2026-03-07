@@ -50,13 +50,19 @@ agentic architecture — not a feature of any particular host runtime.
 ```
 MCP server result arrives
         ↓
+Stage 1: syntactic + schema pre-filter (runs for all results)
+  audit events emitted (syntactic_pass/fail, schema_pass/fail)
+        ↓
 Is server on trusted list?
   ├── YES → fast path → result passed to manager directly
   │                     audit entry logged (trusted_pass)
-  └── NO  → Tier 1: structural pre-filter (no LLM, sub-millisecond)
-              ├── FAIL → safe: false, audit logged (structural_block)
+  │                     (Stage 1 pre-filter result is not acted upon for trusted servers)
+  └── NO  → Tier 1: structural pre-filter (tier1.ts, no LLM, sub-millisecond)
+              ├── FAIL → raw mirror written (safe: false)
+              │          audit logged (structural_block)
               │          structured error returned to manager
               └── PASS → Tier 2: sanitization sub-agent (LLM)
+                          raw mirror written (with final Tier 2 state)
                           structured output only → manager
                           audit entry logged (sanitized_pass | sanitized_block)
 ```
@@ -410,7 +416,7 @@ Summary entry schema for MCP results is the same as transcript-origin, with
 Audit entry additions:
 
 ```
-event: "trusted_pass" | "structural_block" | "sanitized_pass" | "sanitized_block" | "mcp_raw_expired"
+event: "trusted_pass" | "structural_block" | "sanitized_pass" | "sanitized_block" | "raw_expired"
 server
 toolCallId
 tier?                ← 1 or 2, indicating which tier produced the result
@@ -423,13 +429,17 @@ flags?
 
 - Trigger from the MCP tool result return path, after the tool result is received
   and before it is passed to the manager context.
-- Check trusted list first. If trusted, log audit entry and pass through immediately.
+- Run Stage 1 pre-filter (syntactic + schema) unconditionally — this applies to
+  all results including trusted servers. Emit pre-filter audit events.
+- Check trusted list. If trusted, log `trusted_pass` audit entry and return
+  immediately — Stage 1 pre-filter result is not acted upon for trusted results.
+  No raw mirror is written for trusted results.
 - If untrusted:
-  - write raw mirror file
   - run Tier 1 structural pre-filter
-  - if Tier 1 fails, append audit `structural_block` entry, return structured error
-    to manager — skip sub-agent invocation entirely
+  - if Tier 1 fails: write raw mirror (safe: false), append audit `structural_block`
+    entry, return structured error to manager — skip sub-agent invocation entirely
   - if Tier 1 passes, invoke helper in `mcp` mode (Tier 2)
+  - write raw mirror with final Tier 2 state (safe + flags from child output)
   - if Tier 2 `safe: true`, append summary entry, pass `structuredResult` to manager
   - if Tier 2 `safe: false`, append audit `sanitized_block` entry, return structured
     error to manager — never pass raw content
@@ -465,7 +475,7 @@ MCP raw mirror files follow the same expiry and cleanup rules as transcript raw 
 
 - Sweep before every write, recall, and signal operation
 - Delete on session reset and session delete
-- Append `mcp_raw_expired` audit entry on expiry
+- Append `raw_expired` audit entry on expiry (shared event name with transcript raw expiry)
 - Summary and audit entries follow session lifetime
 
 No special handling needed — the existing sweeper covers MCP files because they live
