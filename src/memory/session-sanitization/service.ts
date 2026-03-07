@@ -1087,6 +1087,17 @@ export async function writeTranscriptTurnToSessionMemory(params: {
       auditEnabled,
     );
   } catch (error) {
+    // Remove the raw sidecar — no summary entry was created so it can never
+    // be recalled, and retaining unsanitized content serves no purpose.
+    try {
+      await deleteSessionMemoryRawEntry({
+        agentId: params.agentId,
+        sessionId: params.sessionId,
+        entry: rawEntry,
+      });
+    } catch {
+      // Best-effort — do not let a cleanup failure shadow the write_failed audit.
+    }
     await gatedAudit(
       {
         agentId: params.agentId,
