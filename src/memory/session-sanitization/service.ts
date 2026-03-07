@@ -138,7 +138,16 @@ async function gatedAudit(
   if (!auditEnabled) return;
   const alertingEnabled = alertDeps ? resolveAlertingConfig(alertDeps.cfg).enabled : false;
   if (!shouldEmitForVerbosity(params.entry.event, verbosity, alertingEnabled)) return;
-  await appendSessionMemoryAuditEntry(params);
+  try {
+    await appendSessionMemoryAuditEntry(params);
+  } catch (auditErr) {
+    log.warn("audit write failed — continuing", {
+      event: params.entry.event,
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+      error: auditErr instanceof Error ? auditErr.message : String(auditErr),
+    });
+  }
   if (alertDeps && alertingEnabled) {
     notifyAlerting({
       entry: params.entry,
