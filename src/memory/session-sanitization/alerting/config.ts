@@ -27,10 +27,13 @@ export type ResolvedAlertingConfig = {
   trustedServers: string[];
 };
 
+/** Minimum index TTL — must cover the largest rule window (Rule 4 semantic-catch, 24 h). */
+const MIN_INDEX_TTL_MS = 24 * 60 * 60_000;
+
 export function resolveAlertingConfig(cfg: OpenClawConfig | undefined): ResolvedAlertingConfig {
   const raw = cfg?.alerting;
   const mcp = resolveSessionSanitizationMcpConfig(cfg);
-  return {
+  const resolved: ResolvedAlertingConfig = {
     enabled: raw?.enabled !== false,
     channels: {
       webhook: {
@@ -48,7 +51,7 @@ export function resolveAlertingConfig(cfg: OpenClawConfig | undefined): Resolved
     },
     retention: { days: raw?.retention?.days ?? 30 },
     payload: { recentContextMax: raw?.payload?.recentContextMax ?? 20 },
-    index: { ttlMs: (raw?.index?.ttlMinutes ?? 60) * 60_000 },
+    index: { ttlMs: (raw?.index?.ttlMinutes ?? 1440) * 60_000 },
     rules: {
       syntacticFailBurst: {
         count: raw?.rules?.syntacticFailBurst?.count ?? 5,
@@ -72,4 +75,13 @@ export function resolveAlertingConfig(cfg: OpenClawConfig | undefined): Resolved
     },
     trustedServers: mcp.trustedServers,
   };
+
+  if (resolved.index.ttlMs < MIN_INDEX_TTL_MS) {
+    throw new Error(
+      `alerting.index.ttlMinutes must be >= 1440 (24 h) to cover the Rule 4 semantic-catch` +
+        ` correlation window (got ${Math.round(resolved.index.ttlMs / 60_000)} min)`,
+    );
+  }
+
+  return resolved;
 }

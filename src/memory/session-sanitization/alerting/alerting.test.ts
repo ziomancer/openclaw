@@ -97,7 +97,7 @@ describe("resolveAlertingConfig", () => {
     expect(cfg.rateLimit.maxPerHour).toBe(100);
     expect(cfg.retention.days).toBe(30);
     expect(cfg.payload.recentContextMax).toBe(20);
-    expect(cfg.index.ttlMs).toBe(60 * 60_000);
+    expect(cfg.index.ttlMs).toBe(1440 * 60_000);
     expect(cfg.rules.syntacticFailBurst.count).toBe(5);
     expect(cfg.rules.syntacticFailBurst.windowMs).toBe(10 * 60_000);
     expect(cfg.rules.trustedToolSchemaFail.enabled).toBe(true);
