@@ -41,6 +41,7 @@ import {
   type SessionMemorySignalResult,
   type SessionMemorySummaryEntry,
   type SessionSuspicionState,
+  type ToolOutputSchema,
   type SessionMemoryWriteResult,
 } from "./types.js";
 import { runPreFilter } from "./validation.js";
@@ -210,9 +211,17 @@ function updateFrequencyScore(
   try {
     const prev = existing ?? { lastScore: 0, lastUpdateMs: now };
     const elapsedMs = Math.max(0, now - prev.lastUpdateMs);
-    const decayed = prev.lastScore * Math.exp(-elapsedMs / frequencyCfg.halfLifeMs);
+    const configuredHalfLife = frequencyCfg.halfLifeMs;
+    const halfLifeMs =
+      Number.isFinite(configuredHalfLife) && configuredHalfLife > 0
+        ? configuredHalfLife
+        : 60_000;
+    const decayed = prev.lastScore * Math.exp(-elapsedMs / halfLifeMs);
     const flagWeight = computeFlagWeight(ruleIds, frequencyCfg.weights);
     const newScore = decayed + flagWeight;
+    if (!Number.isFinite(newScore)) {
+      throw new Error("non-finite frequency score");
+    }
 
     const { tier1, tier2, tier3 } = frequencyCfg.thresholds;
     let tier: EscalationTier = "none";
@@ -1335,6 +1344,7 @@ export async function processMcpToolResult(params: {
   toolCallId: string;
   toolName: string;
   rawResult: unknown;
+  toolSchema?: ToolOutputSchema;
   /** The original tool call (query.json for the sub-agent workspace). */
   query: unknown;
   helperDeps?: HelperDeps;
@@ -1420,6 +1430,7 @@ export async function processMcpToolResult(params: {
     input: params.rawResult,
     source: "mcp",
     syntacticConfig: validationCfg.syntactic,
+    toolSchema: params.toolSchema,
     schemaStrictness: validationCfg.context.schemaStrictness,
     rejectUndeclaredToolSchemas: validationCfg.context.rejectUndeclaredToolSchemas,
   });

@@ -13,6 +13,7 @@ import {
   UNKNOWN_MCP_SERVER,
 } from "../memory/session-sanitization/config.js";
 import { processMcpToolResult } from "../memory/session-sanitization/service.js";
+import type { ToolOutputSchema } from "../memory/session-sanitization/types.js";
 import { isPlainObject } from "../utils.js";
 import type { ClientToolDefinition } from "./pi-embedded-runner/run/params.js";
 import { abortEmbeddedPiRun } from "./pi-embedded.js";
@@ -145,6 +146,86 @@ function splitToolExecuteArgs(args: ToolExecuteArgsAny): {
   };
 }
 
+function isStringRecord(value: unknown): value is Record<string, string> {
+  if (!isPlainObject(value)) return false;
+  return Object.values(value).every((v) => typeof v === "string");
+}
+
+function isVariantRecord(value: unknown): value is Record<string, Record<string, string>> {
+  if (!isPlainObject(value)) return false;
+  return Object.values(value).every((v) => isStringRecord(v));
+}
+
+function isToolOutputSchema(value: unknown): value is ToolOutputSchema {
+  if (!isPlainObject(value)) return false;
+  const schema = value as Record<string, unknown>;
+  if ("fields" in schema && schema.fields !== undefined && !isStringRecord(schema.fields)) {
+    return false;
+  }
+  if (
+    "discriminant" in schema &&
+    schema.discriminant !== undefined &&
+    typeof schema.discriminant !== "string"
+  ) {
+    return false;
+  }
+  if ("variants" in schema && schema.variants !== undefined && !isVariantRecord(schema.variants)) {
+    return false;
+  }
+  return "fields" in schema || "variants" in schema;
+}
+
+function fieldTypeFromJsonSchema(schema: Record<string, unknown>): string | undefined {
+  if ("const" in schema) {
+    return `const:${String(schema.const)}`;
+  }
+
+  const rawType = schema.type;
+  if (typeof rawType === "string") {
+    return rawType === "integer" ? "number" : rawType;
+  }
+  if (Array.isArray(rawType)) {
+    const types = rawType
+      .filter((v): v is string => typeof v === "string")
+      .map((v) => (v === "integer" ? "number" : v));
+    return types.length > 0 ? types.join(" | ") : undefined;
+  }
+  return undefined;
+}
+
+function jsonObjectSchemaToToolOutputSchema(value: unknown): ToolOutputSchema | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const schema = value as Record<string, unknown>;
+  if (schema.type !== "object" || !isPlainObject(schema.properties)) return undefined;
+
+  const fields: Record<string, string> = {};
+  for (const [field, descriptor] of Object.entries(schema.properties)) {
+    const fieldSchema = isPlainObject(descriptor)
+      ? (descriptor as Record<string, unknown>)
+      : undefined;
+    fields[field] = fieldSchema ? fieldTypeFromJsonSchema(fieldSchema) ?? "any" : "any";
+  }
+  return Object.keys(fields).length > 0 ? { fields } : undefined;
+}
+
+function extractToolOutputSchema(def: ToolDefinition): ToolOutputSchema | undefined {
+  const keys = [
+    "toolSchema",
+    "outputSchema",
+    "output_schema",
+    "resultSchema",
+    "result_schema",
+  ] as const;
+  const record = def as Record<string, unknown>;
+  for (const key of keys) {
+    const candidate = record[key];
+    if (isToolOutputSchema(candidate)) return candidate;
+    const converted = jsonObjectSchemaToToolOutputSchema(candidate);
+    if (converted) return converted;
+  }
+  return undefined;
+}
+
 export function toToolDefinitions(tools: AnyAgentTool[]): ToolDefinition[] {
   return tools.map((tool) => {
     const name = tool.name || "tool";
@@ -246,6 +327,7 @@ export function wrapMcpToolDefinitions(
     // Fail-open here would silently bypass sanitization for ambiguous mappings.
     changed = true;
     const originalExecute = def.execute;
+    const toolSchema = extractToolOutputSchema(def);
     return {
       ...def,
       execute: async (
@@ -266,6 +348,7 @@ export function wrapMcpToolDefinitions(
             toolCallId,
             toolName: def.name,
             rawResult,
+            toolSchema,
             query: { server, tool: def.name, params: toolParams },
             helperDeps: { lane: params.lane ?? "background:session-memory-mcp" },
           });

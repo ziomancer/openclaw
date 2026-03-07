@@ -9,6 +9,7 @@ import {
   readSessionMemoryMcpRawEntries,
   readSessionMemorySummaryEntries,
 } from "./storage.js";
+import type { ToolOutputSchema } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -376,6 +377,43 @@ describe("processMcpToolResult", () => {
       });
       expect(audits.some((a) => a.event === "schema_fail")).toBe(true);
       expect(audits.some((a) => a.event === "twopass_hard_block")).toBe(true);
+    });
+
+    it("admin profile accepts MCP results when a declared schema is provided", async () => {
+      const cfg = createConfig({
+        sanitizationOverrides: {
+          context: { profile: "admin" },
+          twoPass: {
+            enabled: false,
+            hardBlockRules: ["injection.ignore-previous"],
+          },
+        },
+      });
+      const runner = vi.fn().mockResolvedValue(mcpChildResult(true));
+      const toolSchema: ToolOutputSchema = {
+        fields: {
+          results: "array",
+        },
+      };
+      const result = await processMcpToolResult({
+        ...baseParams(cfg, {
+          rawResult: { results: [{ title: "ok", snippet: "clean content" }] },
+        }),
+        toolSchema,
+        helperDeps: { runner },
+      });
+
+      expect(result.safe).toBe(true);
+      expect(result.tier).toBe(2);
+      expect(runner).toHaveBeenCalledOnce();
+
+      const audits = await readSessionMemoryAuditEntries({
+        agentId: AGENT_ID,
+        sessionId: SESSION_ID,
+      });
+      expect(audits.some((a) => a.event === "schema_fail")).toBe(false);
+      expect(audits.some((a) => a.event === "schema_pass")).toBe(true);
+      expect(audits.some((a) => a.event === "twopass_hard_block")).toBe(false);
     });
   });
 
