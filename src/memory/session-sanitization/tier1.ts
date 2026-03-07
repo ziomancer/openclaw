@@ -119,7 +119,7 @@ function measureNestingDepth(obj: unknown, depth = 0): number {
   return depth;
 }
 
-function allDataFieldsEmpty(obj: unknown): boolean {
+function allDataFieldsEmpty(obj: unknown, visited = new WeakSet<object>()): boolean {
   if (obj === null || obj === undefined) {
     return true;
   }
@@ -127,6 +127,8 @@ function allDataFieldsEmpty(obj: unknown): boolean {
     return obj.length === 0;
   }
   if (typeof obj === "object") {
+    if (visited.has(obj)) return false;
+    visited.add(obj);
     const values = Object.values(obj as Record<string, unknown>);
     if (values.length === 0) return false;
     return values.every(
@@ -135,7 +137,7 @@ function allDataFieldsEmpty(obj: unknown): boolean {
         v === undefined ||
         v === "" ||
         (Array.isArray(v) && v.length === 0) ||
-        (typeof v === "object" && v !== null && allDataFieldsEmpty(v)),
+        (typeof v === "object" && v !== null && allDataFieldsEmpty(v, visited)),
     );
   }
   return false;
