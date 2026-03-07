@@ -134,6 +134,47 @@ describe("session sanitization service", () => {
     expect(audit.find((a) => a.event === "write")).toBeDefined();
   });
 
+  it("writes transcript memory when transcript is missing but text content exists", async () => {
+    const runner = vi.fn().mockResolvedValue(
+      createRunnerResult({
+        mode: "write",
+        decisions: ["remember plain text turn"],
+        actionItems: [],
+        entities: [],
+        contextNote: "plain text fallback",
+        discard: false,
+      }),
+    );
+
+    await writeTranscriptTurnToSessionMemory({
+      cfg: createConfig(),
+      agentId: AGENT_ID,
+      sessionId: SESSION_ID,
+      canonical: createCanonicalContext({
+        messageId: "msg-no-transcript",
+        transcript: undefined,
+        body: undefined,
+        bodyForAgent: undefined,
+        content: "Plain text inbound",
+      }),
+      helperDeps: { runner },
+    });
+
+    const rawEntries = await readSessionMemoryRawEntries({
+      agentId: AGENT_ID,
+      sessionId: SESSION_ID,
+    });
+    const summaries = await readSessionMemorySummaryEntries({
+      agentId: AGENT_ID,
+      sessionId: SESSION_ID,
+    });
+
+    expect(rawEntries).toHaveLength(1);
+    expect(rawEntries[0]?.entry.messageId).toBe("msg-no-transcript");
+    expect(rawEntries[0]?.entry.transcript).toBe("Plain text inbound");
+    expect(summaries).toHaveLength(1);
+  });
+
   it("records discard decisions without appending a summary entry", async () => {
     const runner = vi.fn().mockResolvedValue(
       createRunnerResult({

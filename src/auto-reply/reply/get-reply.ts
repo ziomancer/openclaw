@@ -183,7 +183,13 @@ export async function getReplyFromConfig(
   } = sessionState;
 
   const canonicalInbound = deriveInboundMessageHookContext(finalized);
-  if (canonicalInbound.transcript) {
+  const hasSanitizationText = [
+    canonicalInbound.transcript,
+    canonicalInbound.content,
+    canonicalInbound.bodyForAgent,
+    canonicalInbound.body,
+  ].some((value) => typeof value === "string" && value.trim().length > 0);
+  if (hasSanitizationText) {
     queueSessionSanitizationWrite({
       cfg,
       agentId,

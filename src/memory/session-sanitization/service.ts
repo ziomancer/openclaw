@@ -421,7 +421,11 @@ function buildRawEntry(params: {
   rawMaxAgeMs: number;
 }): SessionMemoryRawEntry | null {
   const messageId = normalizeText(params.canonical.messageId);
-  const transcript = normalizeText(params.canonical.transcript);
+  const transcript =
+    normalizeText(params.canonical.transcript) ||
+    normalizeText(params.canonical.content) ||
+    normalizeText(params.canonical.bodyForAgent) ||
+    normalizeText(params.canonical.body);
   if (!messageId || !transcript) {
     return null;
   }
