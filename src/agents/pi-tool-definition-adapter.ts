@@ -230,7 +230,9 @@ function extractToolOutputSchema(def: ToolDefinition): ToolOutputSchema | undefi
     "resultSchema",
     "result_schema",
   ] as const;
-  const record = def as Record<string, unknown>;
+  const obj = def as unknown;
+  if (typeof obj !== "object" || obj === null || Array.isArray(obj)) return undefined;
+  const record = obj as Record<string, unknown>;
   for (const key of keys) {
     const candidate = record[key];
     if (isToolOutputSchema(candidate)) return candidate;
