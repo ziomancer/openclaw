@@ -1341,83 +1341,58 @@ export async function processMcpToolResult(params: {
   // Alerting context threaded through all gatedAudit calls in this function
   const alertDeps = { cfg: params.cfg, now };
 
-  // Trusted list fast path.
-  if (
-    isMcpServerTrusted({
-      cfg: params.cfg,
-      server: params.server,
-    })
-  ) {
-    await gatedAudit(
-      {
-        agentId: params.agentId,
-        sessionId: params.sessionId,
-        entry: {
-          event: "trusted_pass",
-          timestamp: nowIso(now),
-          server: params.server,
-          toolCallId: params.toolCallId,
-        },
-      },
-      auditVerbosity,
-      alertDeps,
-      auditEnabled,
-    );
-    return {
-      trusted: true,
-      safe: true,
-      structuredResult:
-        params.rawResult !== null && typeof params.rawResult === "object"
-          ? (params.rawResult as Record<string, unknown>)
-          : {},
-      flags: [],
-      contextNote: `trusted server: ${params.server}`,
-    };
-  }
+  const trustedServer = isMcpServerTrusted({
+    cfg: params.cfg,
+    server: params.server,
+  });
 
   // Sandbox availability check for untrusted servers.
-  const availability = resolveSessionSanitizationAvailability({
-    cfg: params.cfg,
-    agentId: params.agentId,
-  });
-  if (!availability.available) {
-    if (mcpCfg.blockOnSandboxUnavailable) {
-      log.warn("mcp sanitization: sandbox unavailable, blocking untrusted result", {
-        agentId: params.agentId,
-        server: params.server,
-        toolCallId: params.toolCallId,
-      });
-      return buildBlockedResult(
-        ["sandbox isolation unavailable — untrusted result blocked"],
-        "blocked: sandbox unavailable",
-        1,
-      );
+  if (!trustedServer) {
+    const availability = resolveSessionSanitizationAvailability({
+      cfg: params.cfg,
+      agentId: params.agentId,
+    });
+    if (!availability.available) {
+      if (mcpCfg.blockOnSandboxUnavailable) {
+        log.warn("mcp sanitization: sandbox unavailable, blocking untrusted result", {
+          agentId: params.agentId,
+          server: params.server,
+          toolCallId: params.toolCallId,
+        });
+        return buildBlockedResult(
+          ["sandbox isolation unavailable — untrusted result blocked"],
+          "blocked: sandbox unavailable",
+          1,
+        );
+      }
+      if (!warnedSandboxSkipPassthrough.has(params.agentId)) {
+        warnedSandboxSkipPassthrough.add(params.agentId);
+        log.warn(
+          "MCP sanitization sandbox unavailable — returning raw tool result as trusted pass-through (blockOnSandboxUnavailable=false). Raw MCP output will not be inspected. Ensure this deployment is intentional.",
+          { agentId: params.agentId, server: params.server },
+        );
+      }
+      return {
+        trusted: true,
+        safe: true,
+        structuredResult:
+          params.rawResult !== null && typeof params.rawResult === "object"
+            ? (params.rawResult as Record<string, unknown>)
+            : {},
+        flags: ["sandbox unavailable — sanitization skipped per config"],
+        contextNote: "sandbox unavailable, sanitization skipped",
+      };
     }
-    if (!warnedSandboxSkipPassthrough.has(params.agentId)) {
-      warnedSandboxSkipPassthrough.add(params.agentId);
-      log.warn(
-        "MCP sanitization sandbox unavailable — returning raw tool result as trusted pass-through (blockOnSandboxUnavailable=false). Raw MCP output will not be inspected. Ensure this deployment is intentional.",
-        { agentId: params.agentId, server: params.server },
-      );
-    }
-    return {
-      trusted: true,
-      safe: true,
-      structuredResult:
-        params.rawResult !== null && typeof params.rawResult === "object"
-          ? (params.rawResult as Record<string, unknown>)
-          : {},
-      flags: ["sandbox unavailable — sanitization skipped per config"],
-      contextNote: "sandbox unavailable, sanitization skipped",
-    };
   }
 
   // Sweep expired MCP raw entries before writing a new one.
-  await sweepExpiredSessionMemoryMcpRawEntries({
-    agentId: params.agentId,
-    sessionId: params.sessionId,
-    now,
-  });
+  if (!trustedServer) {
+    await sweepExpiredSessionMemoryMcpRawEntries({
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+      now,
+    });
+  }
 
   // --- Stage 1: Parallel pre-filter (syntactic + schema) ---
   const mcpPreFilter = await runPreFilter({
@@ -1547,6 +1522,34 @@ export async function processMcpToolResult(params: {
       alertDeps,
       auditEnabled,
     );
+  }
+
+  if (trustedServer) {
+    await gatedAudit(
+      {
+        agentId: params.agentId,
+        sessionId: params.sessionId,
+        entry: {
+          event: "trusted_pass",
+          timestamp: nowIso(now),
+          server: params.server,
+          toolCallId: params.toolCallId,
+        },
+      },
+      auditVerbosity,
+      alertDeps,
+      auditEnabled,
+    );
+    return {
+      trusted: true,
+      safe: true,
+      structuredResult:
+        params.rawResult !== null && typeof params.rawResult === "object"
+          ? (params.rawResult as Record<string, unknown>)
+          : {},
+      flags: [],
+      contextNote: `trusted server: ${params.server}`,
+    };
   }
 
   // --- Frequency tracking update ---

@@ -154,9 +154,26 @@ describe("processMcpToolResult", () => {
         agentId: AGENT_ID,
         sessionId: SESSION_ID,
       });
-      expect(audits).toHaveLength(1);
-      expect(audits[0].event).toBe("trusted_pass");
-      expect(audits[0].server).toBe("community-search");
+      const trustedPass = audits.find((a) => a.event === "trusted_pass");
+      expect(trustedPass).toBeDefined();
+      expect(trustedPass?.server).toBe("community-search");
+    });
+
+    it("evaluates schema checks before trusted bypass", async () => {
+      const cfg = createConfig({ trustedServers: ["community-search"] });
+      const result = await processMcpToolResult({
+        ...baseParams(cfg, { rawResult: "bare string result" }),
+        helperDeps: { runner: vi.fn() },
+      });
+      expect(result.trusted).toBe(true);
+      expect(result.safe).toBe(true);
+
+      const audits = await readSessionMemoryAuditEntries({
+        agentId: AGENT_ID,
+        sessionId: SESSION_ID,
+      });
+      expect(audits.some((a) => a.event === "schema_fail")).toBe(true);
+      expect(audits.some((a) => a.event === "trusted_pass")).toBe(true);
     });
 
     it("does not write a raw mirror for trusted servers", async () => {
@@ -537,8 +554,9 @@ describe("processMcpToolResult", () => {
         agentId: AGENT_ID,
         sessionId: SESSION_ID,
       });
-      expect(audits[0].toolCallId).toBe("call-trusted-001");
-      expect(audits[0].server).toBe("community-search");
+      const trustedPass = audits.find((a) => a.event === "trusted_pass");
+      expect(trustedPass?.toolCallId).toBe("call-trusted-001");
+      expect(trustedPass?.server).toBe("community-search");
     });
 
     it("structural_block includes flags from Tier 1", async () => {

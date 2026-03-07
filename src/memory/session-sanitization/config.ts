@@ -276,12 +276,11 @@ export function resolveSessionSanitizationValidationConfig(
 
 /**
  * Returns true when the tool name is claimed by at least one server in
- * `cfg.mcpServers`, either by exact name match or by prefix match (i.e. the
- * tool name starts with a declared prefix entry).
+ * `cfg.mcpServers` by exact name match.
  *
- * Uses the same matching logic as `resolveToolServer` so the two functions
- * stay consistent.  Used as the MCP membership gate in `wrapMcpToolDefinitions`
- * to distinguish confirmed MCP tools from native OpenClaw / client tools.
+ * This function is the MCP membership gate in `wrapMcpToolDefinitions`, so it
+ * must remain exact-match only. Prefix patterns are intentionally reserved for
+ * server resolution in `resolveToolServer`.
  */
 export function isMcpToolNameDeclared(cfg: OpenClawConfig | undefined, toolName: string): boolean {
   const registry = cfg?.mcpServers;
@@ -289,7 +288,7 @@ export function isMcpToolNameDeclared(cfg: OpenClawConfig | undefined, toolName:
   for (const entry of Object.values(registry)) {
     if (
       Array.isArray(entry?.tools) &&
-      entry.tools.some((t) => typeof t === "string" && (t === toolName || toolName.startsWith(t)))
+      entry.tools.some((t) => typeof t === "string" && t === toolName)
     ) {
       return true;
     }
