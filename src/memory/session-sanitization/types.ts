@@ -42,6 +42,7 @@ export type SessionMemoryAuditEvent =
   | "write"
   | "discard"
   | "write_failed"
+  | "signal_failed"
   | "raw_expired"
   | "trusted_pass"
   | "structural_block"
@@ -274,6 +275,7 @@ export const sessionMemoryAuditEntrySchema = z
       "write",
       "discard",
       "write_failed",
+      "signal_failed",
       "raw_expired",
       "trusted_pass",
       "structural_block",

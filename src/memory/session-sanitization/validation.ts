@@ -479,12 +479,6 @@ function validateMcpResult(
         "MCP result with no declared schema must be a JSON object or array",
       );
     }
-    if (typeof input === "string" || typeof input === "number" || typeof input === "boolean") {
-      addViolation(
-        "schema.type-mismatch",
-        "MCP result with no declared schema must not be a bare primitive",
-      );
-    }
     return { pass: !blocking, violations, ruleIds };
   }
 

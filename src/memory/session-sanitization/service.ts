@@ -214,9 +214,7 @@ function updateFrequencyScore(
     const elapsedMs = Math.max(0, now - prev.lastUpdateMs);
     const configuredHalfLife = frequencyCfg.halfLifeMs;
     const halfLifeMs =
-      Number.isFinite(configuredHalfLife) && configuredHalfLife > 0
-        ? configuredHalfLife
-        : 60_000;
+      Number.isFinite(configuredHalfLife) && configuredHalfLife > 0 ? configuredHalfLife : 60_000;
     const decayed = prev.lastScore * Math.exp(-elapsedMs / halfLifeMs);
     const flagWeight = computeFlagWeight(ruleIds, frequencyCfg.weights);
     const newScore = decayed + flagWeight;
@@ -379,10 +377,7 @@ function normalizeText(value: string | undefined): string {
 }
 
 function escapePromptXmlText(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 function isNonEmptyText(value: string | undefined): boolean {
@@ -1261,7 +1256,7 @@ export async function signalSessionMemory(params: {
           agentId: params.agentId,
           sessionId: params.sessionId,
           entry: {
-            event: "write_failed",
+            event: "signal_failed",
             timestamp: nowIso(now),
             reason: `signal helper failed: ${reason}`,
           },

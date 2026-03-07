@@ -254,6 +254,9 @@ const CRED008_ENTROPY_THRESHOLD = 4.5;
 function checkEntropyCredentials(values: string[], acc: CheckAccumulator): void {
   for (const v of values) {
     if (v.length > CRED008_MIN_LEN && v.length < CRED008_MAX_LEN) {
+      // Skip entropy check if value contains non-Latin characters —
+      // high entropy is expected and benign for CJK, Arabic, Devanagari, etc.
+      if (/[^\u0000-\u024F]/.test(v)) continue;
       if (shannonEntropy(v) > CRED008_ENTROPY_THRESHOLD) {
         addBlock(acc, "CRED-008", "CRED-008: high-entropy string detected in result field value");
         return; // one flag is sufficient
