@@ -226,8 +226,8 @@ const MemorySessionSanitizationAuditSchema = z
   .object({
     enabled: z.boolean().optional(),
     verbosity: z.enum(["minimal", "standard", "high", "maximum"]).optional(),
-    retentionDays: z.number().optional(),
-    rawRetentionDays: z.number().optional(),
+    retentionDays: z.number().int().nonnegative().optional(),
+    rawRetentionDays: z.number().int().nonnegative().optional(),
   })
   .strict();
 

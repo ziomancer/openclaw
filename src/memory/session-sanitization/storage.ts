@@ -388,7 +388,8 @@ export async function sweepOldAuditEntries(params: {
     const raw = await safeReadUtf8(filePath);
     if (!raw) return;
     const entries = parseJsonLines(raw, (value) => sessionMemoryAuditEntrySchema.parse(value));
-    const cutoffMs = Date.now() - params.retentionDays * 24 * 60 * 60 * 1000;
+    const safeRetentionDays = Math.max(0, params.retentionDays);
+    const cutoffMs = Date.now() - safeRetentionDays * 24 * 60 * 60 * 1000;
     const kept = entries.filter((e) => {
       const ts = typeof e.timestamp === "string" ? Date.parse(e.timestamp) : NaN;
       return !Number.isFinite(ts) || ts >= cutoffMs;

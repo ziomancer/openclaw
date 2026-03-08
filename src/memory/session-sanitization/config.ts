@@ -225,6 +225,11 @@ export function resolveSessionSanitizationValidationConfig(
   const mergedTier1 = profile.frequencyThresholdOverrides.tier1 ?? globalTier1;
   const mergedTier2 = profile.frequencyThresholdOverrides.tier2 ?? globalTier2;
   const mergedTier3 = profile.frequencyThresholdOverrides.tier3 ?? globalTier3;
+  if (!(mergedTier1 < mergedTier2 && mergedTier2 < mergedTier3)) {
+    throw new Error(
+      `frequency thresholds must satisfy tier1 < tier2 < tier3, got: ${mergedTier1}, ${mergedTier2}, ${mergedTier3}`,
+    );
+  }
 
   // Effective audit verbosity: max(globalVerbosity, profileVerbosityFloor)
   const globalVerbosity: AuditVerbosity = raw?.audit?.verbosity ?? "standard";
