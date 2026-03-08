@@ -98,7 +98,7 @@ describe("processMcpToolResult", () => {
   });
 
   afterEach(async () => {
-    resetSessionFrequencyState(SESSION_ID);
+    resetSessionFrequencyState(AGENT_ID, SESSION_ID);
     if (originalStateDir === undefined) {
       delete process.env.OPENCLAW_STATE_DIR;
     } else {

@@ -153,7 +153,7 @@ describe("Phase 2 pipeline integration", () => {
   });
 
   afterEach(async () => {
-    resetSessionFrequencyState(SESSION_ID);
+    resetSessionFrequencyState(AGENT_ID, SESSION_ID);
     if (originalStateDir === undefined) {
       delete process.env.OPENCLAW_STATE_DIR;
     } else {
@@ -354,7 +354,7 @@ describe("Phase 2 pipeline integration", () => {
         });
       }
       // Reset state
-      resetSessionFrequencyState(SESSION_ID);
+      resetSessionFrequencyState(AGENT_ID, SESSION_ID);
 
       // Next call should NOT be terminated
       const result = await processMcpToolResult({
@@ -384,7 +384,7 @@ describe("Phase 2 pipeline integration", () => {
 
       // Reset audit log for clean state check — not possible without new session,
       // but we can verify subsequent clean call after large elapsed time doesn't re-escalate
-      resetSessionFrequencyState(SESSION_ID);
+      resetSessionFrequencyState(AGENT_ID, SESSION_ID);
 
       // Simulate a call with injection, then long time passes (halfLife * 10 ≈ full decay)
       now = Date.now();

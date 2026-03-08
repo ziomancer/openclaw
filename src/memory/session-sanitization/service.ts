@@ -169,11 +169,15 @@ async function gatedAudit(
 
 // ---------------------------------------------------------------------------
 // Within-session frequency tracking state
-// Held in memory for process lifetime. Per-session, indexed by sessionId.
+// Held in memory for process lifetime. Per session, indexed by agentId:sessionId.
 // Not persisted — session restart resets the score (spec requirement).
 // ---------------------------------------------------------------------------
 
 const sessionFrequencyState = new Map<string, SessionSuspicionState>();
+
+function buildAgentSessionKey(agentId: string, sessionId: string): string {
+  return `${agentId}:${sessionId}`;
+}
 
 /**
  * Look up the weight for a rule ID by checking exact match first,
@@ -210,12 +214,14 @@ function computeFlagWeight(ruleIds: string[], weights: Record<string, number>): 
  * O(1) per call — two reads, one write to the in-memory Map.
  */
 function updateFrequencyScore(
+  agentId: string,
   sessionId: string,
   ruleIds: string[],
   now: number,
   frequencyCfg: ResolvedValidationConfig["frequency"],
 ): { newScore: number; tier: EscalationTier; state: SessionSuspicionState } {
-  const existing = sessionFrequencyState.get(sessionId);
+  const frequencyKey = buildAgentSessionKey(agentId, sessionId);
+  const existing = sessionFrequencyState.get(frequencyKey);
 
   // Already terminated — block all future calls immediately
   if (existing?.terminated) {
@@ -256,10 +262,11 @@ function updateFrequencyScore(
       lastUpdateMs: now,
       ...(terminated ? { terminated: true } : {}),
     };
-    sessionFrequencyState.set(sessionId, state);
+    sessionFrequencyState.set(frequencyKey, state);
     return { newScore, tier, state };
   } catch (error) {
     log.warn("frequency scoring failed, degrading gracefully", {
+      agentId,
       sessionId,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -897,7 +904,8 @@ export async function writeTranscriptTurnToSessionMemory(params: {
   let frequencyTier: EscalationTier = "none";
   let frequencyScore = 0;
   // Always check for already-terminated sessions — even clean payloads must be blocked.
-  const existingFreqState = sessionFrequencyState.get(params.sessionId);
+  const frequencyKey = buildAgentSessionKey(params.agentId, params.sessionId);
+  const existingFreqState = sessionFrequencyState.get(frequencyKey);
   if (existingFreqState?.terminated) {
     frequencyTier = "tier3";
   } else if (validationCfg.frequency.enabled && existingFreqState) {
@@ -906,6 +914,7 @@ export async function writeTranscriptTurnToSessionMemory(params: {
   }
   if (validationCfg.frequency.enabled && preFilter.allRuleIds.length > 0) {
     const freq = updateFrequencyScore(
+      params.agentId,
       params.sessionId,
       preFilter.allRuleIds,
       now,
@@ -1369,13 +1378,18 @@ export async function cleanupSessionSanitizationArtifacts(params: {
   });
   // Also reset in-memory frequency state so cleanup is complete.
   if (params.sessionId) {
-    sessionFrequencyState.delete(params.sessionId);
-    profileLoadedSessions.delete(`${params.agentId}:${params.sessionId}`);
+    sessionFrequencyState.delete(buildAgentSessionKey(params.agentId, params.sessionId));
+    profileLoadedSessions.delete(buildAgentSessionKey(params.agentId, params.sessionId));
     return;
   }
 
-  // Full agent cleanup: clear all profile-loaded markers for this agent.
+  // Full agent cleanup: clear all in-memory state for this agent.
   const prefix = `${params.agentId}:`;
+  for (const key of sessionFrequencyState.keys()) {
+    if (key.startsWith(prefix)) {
+      sessionFrequencyState.delete(key);
+    }
+  }
   for (const key of profileLoadedSessions) {
     if (key.startsWith(prefix)) {
       profileLoadedSessions.delete(key);
@@ -1388,13 +1402,10 @@ export async function cleanupSessionSanitizationArtifacts(params: {
  * Called on session reset so that a fresh session starts with a clean score.
  * Per-spec: "Session restart resets the frequency score."
  */
-export function resetSessionFrequencyState(sessionId: string): void {
-  sessionFrequencyState.delete(sessionId);
-  for (const key of profileLoadedSessions) {
-    if (key.endsWith(`:${sessionId}`)) {
-      profileLoadedSessions.delete(key);
-    }
-  }
+export function resetSessionFrequencyState(agentId: string, sessionId: string): void {
+  const key = buildAgentSessionKey(agentId, sessionId);
+  sessionFrequencyState.delete(key);
+  profileLoadedSessions.delete(key);
 }
 
 // ---------------------------------------------------------------------------
@@ -1688,7 +1699,8 @@ export async function processMcpToolResult(params: {
 
   // Always check for already-terminated sessions — trusted servers do not exempt
   // a terminated session, and disabling frequency tracking does not un-terminate one.
-  const existingFreqState = sessionFrequencyState.get(params.sessionId);
+  const frequencyKey = buildAgentSessionKey(params.agentId, params.sessionId);
+  const existingFreqState = sessionFrequencyState.get(frequencyKey);
   if (existingFreqState?.terminated) {
     return {
       ...buildBlockedResult(
@@ -1743,6 +1755,7 @@ export async function processMcpToolResult(params: {
     }
     if (mcpPreFilter.allRuleIds.length > 0) {
       const freq = updateFrequencyScore(
+        params.agentId,
         params.sessionId,
         mcpPreFilter.allRuleIds,
         now,

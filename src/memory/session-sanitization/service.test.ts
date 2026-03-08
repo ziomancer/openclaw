@@ -565,7 +565,7 @@ describe("session sanitization service", () => {
     });
     expect(beforeReset.filter((entry) => entry.event === "context_profile_loaded")).toHaveLength(1);
 
-    resetSessionFrequencyState(profileSessionId);
+    resetSessionFrequencyState(AGENT_ID, profileSessionId);
 
     await writeTranscriptTurnToSessionMemory({
       cfg: createConfig(),
@@ -904,7 +904,7 @@ describe("session sanitization service", () => {
       "elevated injection pattern frequency",
     );
 
-    resetSessionFrequencyState(tier2SessionId);
+    resetSessionFrequencyState(AGENT_ID, tier2SessionId);
   });
 
   it("suppresses transcript write after session is terminated via frequency tier3", async () => {
@@ -1008,7 +1008,7 @@ describe("session sanitization service", () => {
       ),
     ).toBe(false);
 
-    resetSessionFrequencyState(terminatedSessionId);
+    resetSessionFrequencyState(AGENT_ID, terminatedSessionId);
   });
 
   it("cleans up raw, summary, and audit sidecars for a session", async () => {
