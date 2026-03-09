@@ -55,8 +55,9 @@ export function guardSessionManager(
                   sessionKey: opts?.sessionKey,
                 })
               : undefined;
-          if (hasSanitization) {
-            const canonical = toCanonicalInboundMessageHookContext(event.message);
+          if (hasSanitization && !result?.block) {
+            const messageToSanitize = result?.message ?? event.message;
+            const canonical = toCanonicalInboundMessageHookContext(messageToSanitize);
             if (canonical) {
               queueSessionSanitizationWrite({
                 cfg: opts!.cfg!,
