@@ -84,29 +84,32 @@ export function recordFired(key: string, now: number, suppressionWindowMs?: numb
 // Rate limit state
 // ---------------------------------------------------------------------------
 
-/** Map from ruleId to a list of timestamps when alerts were delivered. */
+/** Single key for the global delivery timestamp bucket (spec: "Global alert rate limit"). */
+const GLOBAL_RATE_LIMIT_KEY = "global";
+
+/** Global delivery timestamps — keyed on GLOBAL_RATE_LIMIT_KEY, not per rule. */
 const rateLimitState = new Map<string, number[]>();
 
-/** Returns true when the rule has exhausted its per-minute or per-hour quota. */
+/** Returns true when the global delivery budget for the minute or hour is exhausted. */
 export function isRateLimited(
-  ruleId: string,
+  _ruleId: string,
   maxPerMinute: number,
   maxPerHour: number,
   now: number,
 ): boolean {
-  const timestamps = rateLimitState.get(ruleId) ?? [];
+  const timestamps = rateLimitState.get(GLOBAL_RATE_LIMIT_KEY) ?? [];
   const perMinute = timestamps.filter((t) => now - t < 60_000).length;
   const perHour = timestamps.filter((t) => now - t < 3_600_000).length;
   return perMinute >= maxPerMinute || perHour >= maxPerHour;
 }
 
-/** Record a successful alert delivery for rate-limiting purposes. */
-export function recordDelivery(ruleId: string, now: number): void {
-  const prev = rateLimitState.get(ruleId) ?? [];
+/** Record a successful alert delivery against the global rate-limit budget. */
+export function recordDelivery(_ruleId: string, now: number): void {
+  const prev = rateLimitState.get(GLOBAL_RATE_LIMIT_KEY) ?? [];
   // Prune entries older than one hour, then append
   const pruned = prev.filter((t) => now - t < 3_600_000);
   pruned.push(now);
-  rateLimitState.set(ruleId, pruned);
+  rateLimitState.set(GLOBAL_RATE_LIMIT_KEY, pruned);
 }
 
 // ---------------------------------------------------------------------------
