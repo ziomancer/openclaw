@@ -20,7 +20,7 @@ export type ResolvedAlertingConfig = {
   rules: {
     syntacticFailBurst: { count: number; windowMs: number };
     trustedToolSchemaFail: { enabled: boolean };
-    frequencyEscalation: { tier2: boolean; tier3: boolean };
+    frequencyEscalation: { tier2: boolean; tier3: true };
     semanticCatchNoSyntacticFlag: { enabled: boolean; escalateAfter: number };
     writeFailSpike: { count: number; windowMs: number };
   };
@@ -62,7 +62,7 @@ export function resolveAlertingConfig(cfg: OpenClawConfig | undefined): Resolved
       },
       frequencyEscalation: {
         tier2: raw?.rules?.frequencyEscalation?.tier2?.enabled !== false,
-        tier3: true, // tier3 (session termination) cannot be disabled
+        tier3: true as const, // session termination alerts are non-suppressible
       },
       semanticCatchNoSyntacticFlag: {
         enabled: raw?.rules?.semanticCatchNoSyntacticFlag?.enabled !== false,
