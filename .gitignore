@@ -121,3 +121,9 @@ dist/protocol.schema.json
 
 # Synthing
 **/.stfolder/
+
+# Local scratch files
+/test.ndjson
+/exports/test.ndjson
+/imports/notecat.md
+/scripts/committer.ps1
