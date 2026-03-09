@@ -155,25 +155,30 @@ export const evaluateFrequencyEscalation: RuleEvaluator = ({ entry, cfg, recentC
 // ---------------------------------------------------------------------------
 
 const SEMANTIC_CATCH_24H_MS = 24 * 60 * 60 * 1000;
+const SYNTACTIC_PASS_LOOKUP_MS = 5 * 60_000;
 
 export const evaluateSemanticCatch: RuleEvaluator = ({ entry, cfg, recentContext, now }) => {
   if (!cfg.rules.semanticCatchNoSyntacticFlag.enabled) return null;
   if (entry.event !== "sanitized_block") return null;
   if (entry.tier !== 2) return null;
 
-  // Correlate with syntactic_pass (no flags) using messageId (primary) or
-  // toolCallId (fallback). The rule fires only when there is a confirmed
-  // syntactic_pass — meaning Tier 1 ran and found nothing, but Tier 2 caught
-  // something. If we cannot correlate or there is no syntactic_pass, skip.
+  // Correlate with syntactic_pass using messageId (primary) or toolCallId
+  // (fallback). Query the index directly so the result is not affected by the
+  // recentContext slice size (which can be exhausted by rule_triggered events
+  // at high verbosity, causing a silent false-negative).
+  const syntacticPasses = queryIndex({
+    event: "syntactic_pass",
+    agentId: entry.agentId,
+    sessionId: entry.sessionId,
+    windowMs: SYNTACTIC_PASS_LOOKUP_MS,
+    now,
+  });
+
   let hadSyntacticPass: boolean;
   if (entry.messageId) {
-    hadSyntacticPass = recentContext.some(
-      (e) => e.event === "syntactic_pass" && e.messageId === entry.messageId,
-    );
+    hadSyntacticPass = syntacticPasses.some((e) => e.messageId === entry.messageId);
   } else if (entry.toolCallId) {
-    hadSyntacticPass = recentContext.some(
-      (e) => e.event === "syntactic_pass" && e.toolCallId === entry.toolCallId,
-    );
+    hadSyntacticPass = syntacticPasses.some((e) => e.toolCallId === entry.toolCallId);
   } else {
     log.warn("alerting: Rule 4 — messageId and toolCallId both null, skipping correlation", {
       agentId: entry.agentId,

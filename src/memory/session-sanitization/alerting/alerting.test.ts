@@ -440,8 +440,8 @@ describe("evaluateSemanticCatch", () => {
 
   it("returns alert when tier 2 block has a syntactic_pass for same toolCallId", () => {
     const entry = makeEvent("sanitized_block", { tier: 2, toolCallId: "tc-1" });
-    const recentContext = [makeEvent("syntactic_pass", { toolCallId: "tc-1" })];
-    const alert = evaluateSemanticCatch({ entry, cfg, recentContext, now: NOW });
+    addToIndex(makeEvent("syntactic_pass", { toolCallId: "tc-1" }), NOW);
+    const alert = evaluateSemanticCatch({ entry, cfg, recentContext: [], now: NOW });
     expect(alert?.ruleId).toBe("semanticCatchNoSyntacticFlag");
     expect(alert?.severity).toBe("medium");
   });
@@ -462,8 +462,8 @@ describe("evaluateSemanticCatch", () => {
     }
     const entry = makeEvent("sanitized_block", { tier: 2, toolCallId: "tc-new" });
     // Need a syntactic_pass to trigger the rule
-    const recentContext = [makeEvent("syntactic_pass", { toolCallId: "tc-new" })];
-    const alert = evaluateSemanticCatch({ entry, cfg: smallCfg, recentContext, now: NOW });
+    addToIndex(makeEvent("syntactic_pass", { toolCallId: "tc-new" }), NOW);
+    const alert = evaluateSemanticCatch({ entry, cfg: smallCfg, recentContext: [], now: NOW });
     expect(alert?.severity).toBe("high");
   });
 
@@ -501,10 +501,8 @@ describe("evaluateSemanticCatch — messageId correlation", () => {
   it("correlates by messageId when present (primary join) — fires when syntactic_pass found", () => {
     const entry = makeEvent("sanitized_block", { tier: 2, messageId: "msg-1", toolCallId: "tc-1" });
     // syntactic_pass for same messageId → Tier 1 passed, Tier 2 caught it → alert
-    const recentContext = [
-      makeEvent("syntactic_pass", { messageId: "msg-1", toolCallId: "tc-99" }),
-    ];
-    const alert = evaluateSemanticCatch({ entry, cfg, recentContext, now: NOW });
+    addToIndex(makeEvent("syntactic_pass", { messageId: "msg-1", toolCallId: "tc-99" }), NOW);
+    const alert = evaluateSemanticCatch({ entry, cfg, recentContext: [], now: NOW });
     expect(alert).not.toBeNull();
     expect(alert?.ruleId).toBe("semanticCatchNoSyntacticFlag");
   });
@@ -517,8 +515,8 @@ describe("evaluateSemanticCatch — messageId correlation", () => {
 
   it("uses toolCallId as fallback when messageId is absent — fires when syntactic_pass found", () => {
     const entry = makeEvent("sanitized_block", { tier: 2, toolCallId: "tc-2" });
-    const recentContext = [makeEvent("syntactic_pass", { toolCallId: "tc-2" })];
-    const alert = evaluateSemanticCatch({ entry, cfg, recentContext, now: NOW });
+    addToIndex(makeEvent("syntactic_pass", { toolCallId: "tc-2" }), NOW);
+    const alert = evaluateSemanticCatch({ entry, cfg, recentContext: [], now: NOW });
     expect(alert).not.toBeNull();
   });
 
