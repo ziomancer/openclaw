@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { FinalizedMsgContext } from "../auto-reply/templating.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type {
@@ -290,7 +291,7 @@ export function toCanonicalInboundMessageHookContext(
     channelId: "embedded",
     isGroup: false,
     timestamp,
-    messageId: String(timestamp),
+    messageId: `${timestamp}-${randomUUID().slice(0, 8)}`,
   };
 }
 
