@@ -1384,7 +1384,8 @@ export async function cleanupSessionSanitizationArtifacts(params: {
   }
 
   // Full agent cleanup: clear all in-memory state for this agent.
-  const prefix = `${params.agentId}:`;
+  // Full agent cleanup: clear all in-memory state for this agent.
+  const prefix = `${encodeURIComponent(params.agentId)}:`;
   for (const key of sessionFrequencyState.keys()) {
     if (key.startsWith(prefix)) {
       sessionFrequencyState.delete(key);
