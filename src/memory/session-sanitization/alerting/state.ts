@@ -60,9 +60,9 @@ export function buildDedupKey(ruleId: string, agentId: string, sessionId: string
 
 /** Returns true if an alert with this key fired within the suppression window. */
 export function isDeduped(key: string, windowMs: number, now: number): boolean {
-  const last = dedupState.get(key);
-  if (last === undefined) return false;
-  if (now - last >= windowMs) {
+export function buildDedupKey(ruleId: string, agentId: string, sessionId: string | null): string {
+  return `${ruleId}:${encodeURIComponent(agentId)}:${sessionId !== null ? encodeURIComponent(sessionId) : "cross"}`;
+}
     dedupState.delete(key);
     return false;
   }
