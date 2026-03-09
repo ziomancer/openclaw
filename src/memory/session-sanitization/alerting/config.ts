@@ -40,7 +40,7 @@ export function resolveAlertingConfig(cfg: OpenClawConfig | undefined): Resolved
         url: raw?.channels?.webhook?.url ?? null,
         secret: raw?.channels?.webhook?.secret ?? null,
         retries: raw?.channels?.webhook?.retries ?? 2,
-        retryDelayMs: raw?.channels?.webhook?.retryDelayMs ?? 1000,
+    enabled: raw?.enabled === true,
         timeoutMs: raw?.channels?.webhook?.timeoutMs ?? 5000,
       },
     },
