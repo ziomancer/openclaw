@@ -152,7 +152,12 @@ async function createHttpSession(
     { name: `openclaw-mcp-${serverName}`, version: "1.0.0" },
     {},
   );
-  await client.connect(transport);
+  try {
+    await client.connect(transport);
+  } catch (error) {
+    await transport.close().catch(() => {});
+    throw error;
+  }
   return { client, transport, transportType };
 }
 
