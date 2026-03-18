@@ -106,6 +106,17 @@ function redactUrl(raw: string): string {
   }
 }
 
+const TOOL_NAME_SAFE_RE = /[^A-Za-z0-9_.-]/g;
+const TOOL_NAME_MAX_PREFIX = 30;
+
+function sanitizeServerName(raw: string): string {
+  const cleaned = raw.trim().replace(TOOL_NAME_SAFE_RE, "-");
+  if (cleaned.length > TOOL_NAME_MAX_PREFIX) {
+    return cleaned.slice(0, TOOL_NAME_MAX_PREFIX);
+  }
+  return cleaned || "mcp";
+}
+
 function resolveHeaders(headers?: Record<string, string>): Record<string, string> {
   if (!headers) return {};
   const resolved: Record<string, string> = {};
@@ -314,6 +325,13 @@ export async function createBundleMcpToolRuntime(params: {
           continue;
         }
 
+        const safeServerName = sanitizeServerName(serverName);
+        if (safeServerName !== serverName) {
+          logWarn(
+            `bundle-mcp: server key "${serverName}" sanitized to "${safeServerName}" for tool namespacing.`,
+          );
+        }
+
         try {
           const { client, transport, transportType } = await createHttpSession(
             serverName,
@@ -329,22 +347,22 @@ export async function createBundleMcpToolRuntime(params: {
             const listedTools = await listAllTools(client);
             sessions.push(session);
             registerTools({
-              serverName,
+              serverName: safeServerName,
               client,
               listedTools,
               reservedNames,
               tools,
-              descriptionFallback: `Provided by MCP server "${serverName}" (${redactUrl(httpConfig.url)}).`,
+              descriptionFallback: `Provided by MCP server "${safeServerName}" (${redactUrl(httpConfig.url)}).`,
             });
           } catch (error) {
             logWarn(
-              `bundle-mcp: failed to list tools from server "${serverName}" (${httpConfig.url}): ${String(error)}`,
+              `bundle-mcp: failed to list tools from server "${serverName}" (${redactUrl(httpConfig.url)}): ${String(error)}`,
             );
             await disposeSession(session);
           }
         } catch (error) {
           logWarn(
-            `bundle-mcp: failed to connect to server "${serverName}" (${httpConfig.url}): ${String(error)}`,
+            `bundle-mcp: failed to connect to server "${serverName}" (${redactUrl(httpConfig.url)}): ${String(error)}`,
           );
         }
         continue;
@@ -357,6 +375,13 @@ export async function createBundleMcpToolRuntime(params: {
         continue;
       }
       const launchConfig = launch.config;
+
+      const safeStdioName = sanitizeServerName(serverName);
+      if (safeStdioName !== serverName) {
+        logWarn(
+          `bundle-mcp: server key "${serverName}" sanitized to "${safeStdioName}" for tool namespacing.`,
+        );
+      }
 
       const transport = new StdioClientTransport({
         command: launchConfig.command,
@@ -385,12 +410,12 @@ export async function createBundleMcpToolRuntime(params: {
         const listedTools = await listAllTools(client);
         sessions.push(session);
         registerTools({
-          serverName,
+          serverName: safeStdioName,
           client,
           listedTools,
           reservedNames,
           tools,
-          descriptionFallback: `Provided by bundle MCP server "${serverName}" (${describeStdioMcpServerLaunchConfig(launchConfig)}).`,
+          descriptionFallback: `Provided by bundle MCP server "${safeStdioName}" (${describeStdioMcpServerLaunchConfig(launchConfig)}).`,
         });
       } catch (error) {
         logWarn(
