@@ -306,16 +306,23 @@ export async function createBundleMcpToolRuntime(params: {
             transport,
             transportType,
           };
-          const listedTools = await listAllTools(client);
-          sessions.push(session);
-          registerTools({
-            serverName,
-            client,
-            listedTools,
-            reservedNames,
-            tools,
-            descriptionFallback: `Provided by MCP server "${serverName}" (${httpConfig.url}).`,
-          });
+          try {
+            const listedTools = await listAllTools(client);
+            sessions.push(session);
+            registerTools({
+              serverName,
+              client,
+              listedTools,
+              reservedNames,
+              tools,
+              descriptionFallback: `Provided by MCP server "${serverName}" (${httpConfig.url}).`,
+            });
+          } catch (error) {
+            logWarn(
+              `bundle-mcp: failed to list tools from server "${serverName}" (${httpConfig.url}): ${String(error)}`,
+            );
+            await disposeSession(session);
+          }
         } catch (error) {
           logWarn(
             `bundle-mcp: failed to connect to server "${serverName}" (${httpConfig.url}): ${String(error)}`,
