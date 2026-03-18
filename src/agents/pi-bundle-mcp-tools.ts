@@ -92,6 +92,20 @@ function toAgentToolResult(params: {
   };
 }
 
+function redactUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    if (u.username) u.username = "***";
+    if (u.password) u.password = "***";
+    for (const key of u.searchParams.keys()) {
+      u.searchParams.set(key, "***");
+    }
+    return u.toString();
+  } catch {
+    return "<invalid-url>";
+  }
+}
+
 function resolveHeaders(headers?: Record<string, string>): Record<string, string> {
   if (!headers) return {};
   const resolved: Record<string, string> = {};
@@ -315,7 +329,7 @@ export async function createBundleMcpToolRuntime(params: {
               listedTools,
               reservedNames,
               tools,
-              descriptionFallback: `Provided by MCP server "${serverName}" (${httpConfig.url}).`,
+              descriptionFallback: `Provided by MCP server "${serverName}" (${redactUrl(httpConfig.url)}).`,
             });
           } catch (error) {
             logWarn(
