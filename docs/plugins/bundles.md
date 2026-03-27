@@ -72,13 +72,13 @@ is detected but not yet wired.
 
 ### Supported now
 
-| Feature       | How it maps                                                                                          | Applies to     |
-| ------------- | ---------------------------------------------------------------------------------------------------- | -------------- |
-| Skill content | Bundle skill roots load as normal OpenClaw skills                                                    | All formats    |
-| Commands      | `commands/` and `.cursor/commands/` treated as skill roots                                           | Claude, Cursor |
-| Hook packs    | OpenClaw-style `HOOK.md` + `handler.ts` layouts                                                      | Codex          |
-| MCP tools     | Bundle MCP config merged into embedded Pi settings; stdio and HTTP servers launched at startup        | All formats    |
-| Settings      | Claude `settings.json` imported as embedded Pi defaults                                              | Claude         |
+| Feature       | How it maps                                                                                    | Applies to     |
+| ------------- | ---------------------------------------------------------------------------------------------- | -------------- |
+| Skill content | Bundle skill roots load as normal OpenClaw skills                                              | All formats    |
+| Commands      | `commands/` and `.cursor/commands/` treated as skill roots                                     | Claude, Cursor |
+| Hook packs    | OpenClaw-style `HOOK.md` + `handler.ts` layouts                                                | Codex          |
+| MCP tools     | Bundle MCP config merged into embedded Pi settings; stdio and HTTP servers launched at startup | All formats    |
+| Settings      | Claude `settings.json` imported as embedded Pi defaults                                        | Claude         |
 
 #### MCP transports
 

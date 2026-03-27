@@ -1,8 +1,8 @@
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { OpenClawConfig } from "../config/config.js";
@@ -46,8 +46,14 @@ function connectWithTimeout(
       timeoutMs,
     );
     client.connect(transport).then(
-      (value) => { clearTimeout(timer); resolve(value); },
-      (error) => { clearTimeout(timer); reject(error); },
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
     );
   });
 }
@@ -139,9 +145,10 @@ const TOOL_NAME_MAX_TOTAL = 64;
 
 function sanitizeServerName(raw: string, usedNames: Set<string>): string {
   const cleaned = raw.trim().replace(TOOL_NAME_SAFE_RE, "-");
-  const truncated = cleaned.length > TOOL_NAME_MAX_PREFIX
-    ? cleaned.slice(0, TOOL_NAME_MAX_PREFIX)
-    : cleaned || "mcp";
+  const truncated =
+    cleaned.length > TOOL_NAME_MAX_PREFIX
+      ? cleaned.slice(0, TOOL_NAME_MAX_PREFIX)
+      : cleaned || "mcp";
   let candidate = truncated;
   let n = 2;
   while (usedNames.has(candidate.toLowerCase())) {
@@ -191,15 +198,10 @@ async function createHttpSession(
     });
     transportType = "sse";
   } else {
-    throw new Error(
-      `unknown transport "${config.transport}" — use "streamable-http" or "sse"`,
-    );
+    throw new Error(`unknown transport "${config.transport}" — use "streamable-http" or "sse"`);
   }
 
-  const client = new Client(
-    { name: `openclaw-mcp-${serverName}`, version: "1.0.0" },
-    {},
-  );
+  const client = new Client({ name: `openclaw-mcp-${serverName}`, version: "1.0.0" }, {});
   try {
     await connectWithTimeout(client, transport, timeoutMs);
   } catch (error) {
@@ -239,9 +241,7 @@ function attachStderrLogging(serverName: string, transport: StdioClientTransport
 async function disposeSession(session: BundleMcpSession) {
   session.detachStderr?.();
   if (session.transportType === "streamable-http") {
-    await (session.transport as StreamableHTTPClientTransport)
-      .terminateSession()
-      .catch(() => {});
+    await (session.transport as StreamableHTTPClientTransport).terminateSession().catch(() => {});
   }
   await session.client.close().catch(() => {});
   await session.transport.close().catch(() => {});
@@ -249,7 +249,9 @@ async function disposeSession(session: BundleMcpSession) {
 
 function resolveHttpServerConfig(
   rawServer: unknown,
-): { ok: true; url: string; transport: string; headers?: Record<string, string> } | { ok: false; reason: string } {
+):
+  | { ok: true; url: string; transport: string; headers?: Record<string, string> }
+  | { ok: false; reason: string } {
   if (!isRecord(rawServer)) {
     return { ok: false, reason: "server config must be an object" };
   }
@@ -278,8 +280,9 @@ function resolveHttpServerConfig(
   }
   const headers = isRecord(rawServer.headers)
     ? Object.fromEntries(
-        Object.entries(rawServer.headers)
-          .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+        Object.entries(rawServer.headers).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
       )
     : undefined;
   return { ok: true, url, transport, headers };
@@ -361,7 +364,9 @@ export async function createBundleMcpToolRuntime(params: {
     for (const [serverName, rawServer] of Object.entries(loaded.mcpServers)) {
       // Detect transport mode: command → stdio, url → HTTP
       const hasCommand =
-        isRecord(rawServer) && typeof rawServer.command === "string" && rawServer.command.trim().length > 0;
+        isRecord(rawServer) &&
+        typeof rawServer.command === "string" &&
+        rawServer.command.trim().length > 0;
       const hasUrl =
         isRecord(rawServer) && typeof rawServer.url === "string" && rawServer.url.trim().length > 0;
 
@@ -388,7 +393,9 @@ export async function createBundleMcpToolRuntime(params: {
         }
 
         const httpTimeoutMs =
-          isRecord(rawServer) && typeof rawServer.connectionTimeoutMs === "number" && rawServer.connectionTimeoutMs > 0
+          isRecord(rawServer) &&
+          typeof rawServer.connectionTimeoutMs === "number" &&
+          rawServer.connectionTimeoutMs > 0
             ? rawServer.connectionTimeoutMs
             : DEFAULT_CONNECTION_TIMEOUT_MS;
 
@@ -459,7 +466,9 @@ export async function createBundleMcpToolRuntime(params: {
         {},
       );
       const stdioTimeoutMs =
-        isRecord(rawServer) && typeof rawServer.connectionTimeoutMs === "number" && rawServer.connectionTimeoutMs > 0
+        isRecord(rawServer) &&
+        typeof rawServer.connectionTimeoutMs === "number" &&
+        rawServer.connectionTimeoutMs > 0
           ? rawServer.connectionTimeoutMs
           : DEFAULT_CONNECTION_TIMEOUT_MS;
 
