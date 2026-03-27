@@ -137,12 +137,20 @@ const TOOL_NAME_MAX_PREFIX = 30;
 // Must match TOOL_CALL_NAME_MAX_CHARS in session-transcript-repair.ts
 const TOOL_NAME_MAX_TOTAL = 64;
 
-function sanitizeServerName(raw: string): string {
+function sanitizeServerName(raw: string, usedNames: Set<string>): string {
   const cleaned = raw.trim().replace(TOOL_NAME_SAFE_RE, "-");
-  if (cleaned.length > TOOL_NAME_MAX_PREFIX) {
-    return cleaned.slice(0, TOOL_NAME_MAX_PREFIX);
+  const truncated = cleaned.length > TOOL_NAME_MAX_PREFIX
+    ? cleaned.slice(0, TOOL_NAME_MAX_PREFIX)
+    : cleaned || "mcp";
+  let candidate = truncated;
+  let n = 2;
+  while (usedNames.has(candidate.toLowerCase())) {
+    const suffix = `-${n}`;
+    candidate = truncated.slice(0, TOOL_NAME_MAX_PREFIX - suffix.length) + suffix;
+    n += 1;
   }
-  return cleaned || "mcp";
+  usedNames.add(candidate.toLowerCase());
+  return candidate;
 }
 
 function resolveHeaders(headers?: Record<string, string>): Record<string, string> {
@@ -347,6 +355,7 @@ export async function createBundleMcpToolRuntime(params: {
   );
   const sessions: BundleMcpSession[] = [];
   const tools: AnyAgentTool[] = [];
+  const usedServerNames = new Set<string>();
 
   try {
     for (const [serverName, rawServer] of Object.entries(loaded.mcpServers)) {
@@ -371,7 +380,7 @@ export async function createBundleMcpToolRuntime(params: {
           continue;
         }
 
-        const safeServerName = sanitizeServerName(serverName);
+        const safeServerName = sanitizeServerName(serverName, usedServerNames);
         if (safeServerName !== serverName) {
           logWarn(
             `bundle-mcp: server key "${serverName}" sanitized to "${safeServerName}" for tool namespacing.`,
@@ -428,7 +437,7 @@ export async function createBundleMcpToolRuntime(params: {
       }
       const launchConfig = launch.config;
 
-      const safeStdioName = sanitizeServerName(serverName);
+      const safeStdioName = sanitizeServerName(serverName, usedServerNames);
       if (safeStdioName !== serverName) {
         logWarn(
           `bundle-mcp: server key "${serverName}" sanitized to "${safeStdioName}" for tool namespacing.`,
