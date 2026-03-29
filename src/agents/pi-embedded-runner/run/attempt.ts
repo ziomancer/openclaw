@@ -873,8 +873,25 @@ export async function runEmbeddedAttempt(
         // streamAnthropic for GCP IAM auth instead of Anthropic API keys.
         activeSession.agent.streamFn = createAnthropicVertexStreamFnForModel(params.model);
       } else {
-        // Force a stable streamFn reference so vitest can reliably mock @mariozechner/pi-ai.
-        activeSession.agent.streamFn = streamSimple;
+        // Wrap streamSimple to inject API keys from auth storage. Raw streamSimple
+        // only checks options.apiKey and env vars (getEnvApiKey), which fails for
+        // custom providers like lmstudio that have no env-var mapping in pi-ai.
+        // The stable reference is preserved for vitest by always routing through
+        // the same pi-ai streamSimple under the hood.
+        activeSession.agent.streamFn = async (model, context, options) => {
+          const auth = await params.modelRegistry.getApiKeyAndHeaders(model);
+          if (!auth.ok) {
+            throw new Error(auth.error);
+          }
+          return streamSimple(model, context, {
+            ...options,
+            apiKey: auth.apiKey ?? options?.apiKey,
+            headers:
+              auth.headers || options?.headers
+                ? { ...auth.headers, ...options?.headers }
+                : undefined,
+          });
+        };
       }
 
       // Ollama with OpenAI-compatible API needs num_ctx in payload.options.
