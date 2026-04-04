@@ -251,6 +251,7 @@ export class DiscordVoiceManager {
   private readonly voiceEnabled: boolean;
   private autoJoinTask: Promise<void> | null = null;
   private readonly ownerAllowFrom: string[];
+  // TODO: wired up but not yet read — intended for voice speaker name-matching gating
   private readonly allowDangerousNameMatching: boolean;
   private readonly minSegmentSeconds: number;
   private readonly silenceDurationMs: number;
