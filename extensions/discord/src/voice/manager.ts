@@ -10,6 +10,7 @@ import { agentCommandFromIngress } from "openclaw/plugin-sdk/agent-runtime";
 import { resolveTtsConfig, type ResolvedTtsConfig } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
 import type { DiscordAccountConfig, TtsConfig } from "openclaw/plugin-sdk/config-runtime";
+import { isDangerousNameMatchingEnabled } from "openclaw/plugin-sdk/dangerous-name-runtime";
 import { transcribeAudioFile } from "openclaw/plugin-sdk/media-understanding-runtime";
 import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
 import { logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
