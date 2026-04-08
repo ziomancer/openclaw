@@ -223,6 +223,12 @@ export class WakeWordSidecar {
       }
     });
 
+    // Absorb stdin write errors (EPIPE) when the process dies between the
+    // writable check and the actual write in sendBinaryFrame.
+    proc.stdin?.on("error", (err) => {
+      logger.warn(`sidecar stdin error: ${formatErrorMessage(err)}`);
+    });
+
     proc.on("exit", (code, signal) => {
       logger.warn(`sidecar exited: code=${code} signal=${signal}`);
       this.process = null;
@@ -294,8 +300,12 @@ export class WakeWordSidecar {
     const header = Buffer.allocUnsafe(SIDECAR_HEADER_SIZE);
     header[0] = type;
     header.writeUInt32BE(payload.length, 1);
-    this.process.stdin.write(header);
-    this.process.stdin.write(payload);
+    try {
+      this.process.stdin.write(header);
+      this.process.stdin.write(payload);
+    } catch {
+      // Process may have died between the writable check and the write.
+    }
   }
 
   private handleStdoutLine(line: string): void {

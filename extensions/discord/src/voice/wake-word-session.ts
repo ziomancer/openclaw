@@ -248,7 +248,7 @@ export class WakeWordSession {
 
     // Downsample and forward to the sidecar for wake word detection.
     const pcm16kMono = downsample48kStereoTo16kMono(pcm48kStereo);
-    if (pcm16kMono.length > 0) {
+    if (pcm16kMono.length > 0 && this.sidecar.isAlive()) {
       this.sidecar.sendAudio(pcm16kMono);
     }
   }

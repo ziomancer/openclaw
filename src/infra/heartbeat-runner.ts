@@ -595,6 +595,10 @@ export async function runHeartbeatOnce(opts: {
       nowMs: startedAt,
       forceNew: true,
     });
+    // Clear stale sessionFile so resolveSessionFilePath derives a fresh
+    // transcript path from the new sessionId.  Without this, forceNew
+    // creates a new ID but reuses the old file, defeating isolation.
+    delete cronSession.sessionEntry.sessionFile;
     cronSession.store[isolatedKey] = cronSession.sessionEntry;
     await saveSessionStore(cronSession.storePath, cronSession.store);
     runSessionKey = isolatedKey;

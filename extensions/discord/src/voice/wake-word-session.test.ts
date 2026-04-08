@@ -318,6 +318,32 @@ describe("WakeWordSession", () => {
     });
   });
 
+  describe("dead sidecar guard", () => {
+    it("does not send audio to a dead sidecar", () => {
+      const sidecar = createMockSidecar();
+      vi.mocked(sidecar.isAlive).mockReturnValue(false);
+      const session = new WakeWordSession({
+        sidecar,
+        callbacks: { onUtterance: vi.fn() },
+      });
+
+      session.feedAudio(makePcm48kStereo(20));
+      expect(sidecar.sendAudio).not.toHaveBeenCalled();
+    });
+
+    it("sends audio when sidecar is alive", () => {
+      const sidecar = createMockSidecar();
+      vi.mocked(sidecar.isAlive).mockReturnValue(true);
+      const session = new WakeWordSession({
+        sidecar,
+        callbacks: { onUtterance: vi.fn() },
+      });
+
+      session.feedAudio(makePcm48kStereo(20));
+      expect(sidecar.sendAudio).toHaveBeenCalled();
+    });
+  });
+
   describe("lookback buffer", () => {
     it("prepends lookback buffer to capture on detection", () => {
       const onUtterance = vi.fn();
