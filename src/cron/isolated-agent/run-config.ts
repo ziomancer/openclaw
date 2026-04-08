@@ -43,8 +43,17 @@ export function buildCronAgentDefaultsConfig(params: {
   // already merges global defaults with per-agent overrides using `agentId`;
   // copying the agent sandbox into defaults clobbers global defaults and can
   // double-apply nested agent overrides during isolated cron runs.
-  return mergeCronAgentModelOverride({
+  const merged = mergeCronAgentModelOverride({
     defaults: Object.assign({}, params.defaults, definedOverrides),
     overrideModel,
   });
+  // Cron jobs are background automation with their own job-level timeout.
+  // The LLM idle timeout (default 60 s) is designed for interactive sessions
+  // and causes spurious failures on slower models or large-context cron runs
+  // where first-token latency exceeds 60 s.  Disable it unless the user has
+  // explicitly configured a value.  See: #62752
+  if (merged.llm?.idleTimeoutSeconds === undefined) {
+    merged.llm = Object.assign({}, merged.llm, { idleTimeoutSeconds: 0 });
+  }
+  return merged;
 }
