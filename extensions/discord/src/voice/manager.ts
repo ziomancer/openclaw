@@ -159,6 +159,35 @@ type OpusDecoder = {
 
 let warnedOpusMissing = false;
 
+/**
+ * Validate an Opus packet before handing it to the native decoder.
+ *
+ * The native libopus `abort()`s on malformed frames (e.g. truncated packets
+ * after a stale-socket reconnect), which kills the process — no JS try/catch
+ * can intercept it.  We reject packets that are too short or have an invalid
+ * TOC-byte config field so they never reach the decoder.
+ *
+ * See RFC 6716 §3.1 for the TOC byte layout.
+ */
+function isValidOpusPacket(buf: Buffer): boolean {
+  if (buf.length < 1) return false;
+
+  const toc = buf[0]!;
+  const config = (toc >> 3) & 0x1f; // 5-bit config field (0–31)
+
+  // Config values 0–31 are valid; anything else indicates corruption.
+  // Additionally, very short packets (< 3 bytes) that aren't DTX/silence
+  // comfort-noise frames are suspect.  A single-byte packet is only valid
+  // as a code-0 (single frame, no padding) with an empty frame — which
+  // opus handles — but multi-byte packets under 3 bytes with code > 0 are
+  // malformed.
+  const code = toc & 0x03;
+  if (code >= 2 && buf.length < 2) return false; // code 2/3 need a frame-count byte
+  if (config > 31) return false; // impossible via 5-bit mask, but belt-and-suspenders
+
+  return true;
+}
+
 function createOpusDecoder(): { decoder: OpusDecoder; name: string } | null {
   try {
     const OpusScript = require("opusscript") as {
@@ -187,7 +216,7 @@ async function decodeOpusStream(stream: Readable): Promise<Buffer> {
   const chunks: Buffer[] = [];
   try {
     for await (const chunk of stream) {
-      if (!chunk || !(chunk instanceof Buffer) || chunk.length === 0) {
+      if (!chunk || !(chunk instanceof Buffer) || chunk.length === 0 || !isValidOpusPacket(chunk)) {
         continue;
       }
       const decoded = selected.decoder.decode(chunk);
@@ -791,7 +820,7 @@ export class DiscordVoiceManager {
     }
 
     stream.on("data", (chunk: Buffer) => {
-      if (!chunk || chunk.length === 0) {
+      if (!chunk || chunk.length === 0 || !isValidOpusPacket(chunk)) {
         return;
       }
       try {
