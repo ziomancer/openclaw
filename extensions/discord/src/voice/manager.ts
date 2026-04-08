@@ -33,6 +33,53 @@ import { WAKE_WORD_DEFAULTS } from "./wake-word-types.js";
 
 const require = createRequire(import.meta.url);
 
+// ---------------------------------------------------------------------------
+// Opus WASM abort guard
+//
+// opusscript compiles libopus to WASM via Emscripten.  When libopus hits an
+// assertion, Emscripten's abort handler (1) calls Module.onAbort, (2) rejects
+// Module.ready, then (3) throws.  Step 2 is an unhandled promise rejection
+// that kills the process before our try/catch can handle step 3.
+//
+// By throwing from onAbort we exit the abort handler before step 2, converting
+// the fatal rejection into a normal catchable exception.  We also clear
+// require.cache so the next decoder gets a fresh (un-poisoned) WASM module.
+// ---------------------------------------------------------------------------
+
+let opusWasmAbortPatched = false;
+let opusWasmAbortDetected = false;
+
+function installOpusWasmAbortGuard(): void {
+  let wasmGluePath: string;
+  let opusIndexPath: string;
+  try {
+    wasmGluePath = require.resolve("opusscript/build/opusscript_native_wasm.js");
+    opusIndexPath = require.resolve("opusscript/index.js");
+  } catch {
+    return;
+  }
+
+  if (opusWasmAbortPatched) return;
+  const originalFactory = require(wasmGluePath);
+  if (typeof originalFactory !== "function") return;
+
+  require.cache[wasmGluePath]!.exports = function patchedOpusWasmFactory() {
+    const mod = originalFactory();
+    mod.onAbort = (msg: string) => {
+      opusWasmAbortDetected = true;
+      delete require.cache[wasmGluePath!];
+      delete require.cache[opusIndexPath!];
+      opusWasmAbortPatched = false;
+      throw new Error(`opus WASM abort intercepted: ${msg}`);
+    };
+    if (mod.ready?.catch) mod.ready.catch(() => {});
+    return mod;
+  };
+  opusWasmAbortPatched = true;
+}
+
+installOpusWasmAbortGuard();
+
 const SAMPLE_RATE = 48_000;
 const CHANNELS = 2;
 const BIT_DEPTH = 16;
@@ -189,6 +236,11 @@ function isValidOpusPacket(buf: Buffer): boolean {
 }
 
 function createOpusDecoder(): { decoder: OpusDecoder; name: string } | null {
+  if (opusWasmAbortDetected) {
+    logVoiceVerbose("opus WASM was previously aborted; creating fresh decoder");
+    opusWasmAbortDetected = false;
+    installOpusWasmAbortGuard();
+  }
   try {
     const OpusScript = require("opusscript") as {
       new (sampleRate: number, channels: number, application: number): OpusDecoder;
@@ -219,9 +271,16 @@ async function decodeOpusStream(stream: Readable): Promise<Buffer> {
       if (!chunk || !(chunk instanceof Buffer) || chunk.length === 0 || !isValidOpusPacket(chunk)) {
         continue;
       }
-      const decoded = selected.decoder.decode(chunk);
-      if (decoded && decoded.length > 0) {
-        chunks.push(Buffer.from(decoded));
+      try {
+        const decoded = selected.decoder.decode(chunk);
+        if (decoded && decoded.length > 0) {
+          chunks.push(Buffer.from(decoded));
+        }
+      } catch (decodeErr) {
+        if (opusWasmAbortDetected) {
+          logger.warn("discord voice: opus WASM aborted mid-stream; abandoning decode");
+          break;
+        }
       }
     }
   } catch (err) {
@@ -829,7 +888,16 @@ export class DiscordVoiceManager {
           session.feedAudio(Buffer.from(decoded));
         }
       } catch {
-        // Decode errors are expected occasionally; skip the chunk.
+        if (opusWasmAbortDetected) {
+          logger.warn(
+            `discord voice: opus WASM aborted in wake word stream; tearing down: guild ${entry.guildId} user ${userId}`,
+          );
+          session.destroy();
+          entry.wakeWordSessions!.delete(userId);
+          entry.activeSpeakers.delete(userId);
+          stream.destroy();
+          return;
+        }
       }
     });
 
